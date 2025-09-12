@@ -1,6 +1,6 @@
-# =============================
-# Partner B: Sales & Payment Schema
-# =============================
+-- =============================
+-- Partner B: Sales & Payment Schema
+-- =============================
 
 -- Ensure FK enforcement when running this script
 PRAGMA foreign_keys = ON;

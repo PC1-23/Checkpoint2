@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+  <head><title>Cart</title></head>
+  <body>
+    <h1>Cart</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li>[{{ category }}] {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    {% if items %}
+      <table border="1">
+        <tr><th>Product</th><th>Qty</th><th>Unit</th><th>Line</th></tr>
+        {% for it in items %}
+          <tr>
+            <td>{{ it.name }}</td>
+            <td>{{ it.qty }}</td>
+            <td>{{ '%.2f' % (it.unit / 100.0) }}</td>
+            <td>{{ '%.2f' % (it.line / 100.0) }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+      <p>Total: <b>{{ '%.2f' % (total / 100.0) }}</b></p>
+      <form method="post" action="/checkout">
+        <select name="payment_method">
+          <option value="CARD">Card</option>
+          <option value="CASH">Cash</option>
+          <option value="DECLINE_TEST">Decline Test</option>
+        </select>
+        <button type="submit">Checkout</button>
+      </form>
+      <form method="post" action="/cart/clear">
+        <button type="submit">Clear Cart</button>
+      </form>
+    {% else %}
+      <p>Cart is empty.</p>
+    {% endif %}
+    <p><a href="/products">Back to Products</a></p>
+  </body>
+  </html>

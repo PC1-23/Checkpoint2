@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+  <head><title>Products</title></head>
+  <body>
+    <h1>Products</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li>[{{ category }}] {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    <table border="1">
+      <tr><th>ID</th><th>Name</th><th>Price</th><th>Stock</th><th>Action</th></tr>
+      {% for p in products %}
+        <tr>
+          <td>{{ p.id }}</td>
+          <td>{{ p.name }}</td>
+          <td>{{ '%.2f' % (p.price_cents / 100.0) }}</td>
+          <td>{{ p.stock }}</td>
+          <td>
+            <form method="post" action="/cart/add">
+              <input type="hidden" name="product_id" value="{{ p.id }}">
+              <input type="number" name="qty" value="1" min="1">
+              <button type="submit">Add</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+    <p><a href="/cart">View Cart</a></p>
+  </body>
+  </html>

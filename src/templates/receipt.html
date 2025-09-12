@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head><title>Receipt #{{ sale.id }}</title></head>
+  <body>
+    <h1>Receipt #{{ sale.id }}</h1>
+    <p>Date: {{ sale.sale_time }}</p>
+    <p>Status: {{ sale.status }}</p>
+    <h2>Items</h2>
+    <table border="1">
+      <tr><th>Product ID</th><th>Qty</th><th>Unit</th></tr>
+      {% for it in items %}
+        <tr>
+          <td>{{ it.product_id }}</td>
+          <td>{{ it.quantity }}</td>
+          <td>{{ '%.2f' % (it.price_cents / 100.0) }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+    <p>Total: <b>{{ '%.2f' % (sale.total_cents / 100.0) }}</b></p>
+    <h2>Payment</h2>
+    <p>Method: {{ payment.method }}</p>
+    <p>Status: {{ payment.status }}</p>
+    <p>Ref: {{ payment.ref }}</p>
+    <p><a href="/products">Back to Products</a></p>
+  </body>
+  </html>
