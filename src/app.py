@@ -54,14 +54,38 @@ def create_app() -> Flask:
     def cart_add():
         pid = int(request.form.get("product_id", 0))
         qty = int(request.form.get("qty", 1))
+        
         if qty <= 0:
             flash("Quantity must be > 0", "error")
             return redirect(url_for("products"))
-        cart: Dict[str, int] = session.get("cart", {})
-        cart[str(pid)] = cart.get(str(pid), 0) + qty
-        session["cart"] = cart
-        flash("Added to cart", "info")
-        return redirect(url_for("cart_view"))
+        
+        # Check if product exists and is active
+        conn = get_conn()
+        try:
+            repo = AProductRepo(conn)
+            product = repo.get_product(pid)
+            
+            if not product:
+                flash(f"Product ID {pid} not found", "error")
+                return redirect(url_for("products"))
+            
+            # Check if sufficient stock
+            if not repo.check_stock(pid, qty):
+                flash(f"Only {product['stock']} in stock for {product['name']}", "error")
+                return redirect(url_for("products"))
+            
+            # Add to cart if everything is valid
+            cart = session.get("cart", {})
+            cart[str(pid)] = cart.get(str(pid), 0) + qty
+            session["cart"] = cart
+            flash(f"Added {qty} x {product['name']} to cart", "info")
+            return redirect(url_for("cart_view"))
+            
+        except ValueError:
+            flash("Invalid product ID", "error")
+            return redirect(url_for("products"))
+        finally:
+            conn.close()
 
     @app.get("/cart")
     def cart_view():
@@ -122,6 +146,17 @@ def create_app() -> Flask:
         session.pop("cart", None)
         flash(f"Checkout success. Sale #{sale_id}", "success")
         return redirect(url_for("receipt", sale_id=sale_id))
+    @app.post("/cart/remove")
+    def cart_remove():
+        pid = request.form.get("product_id")
+        cart = session.get("cart", {})
+        
+        if pid in cart:
+            del cart[pid]
+            session["cart"] = cart
+            flash("Item removed from cart", "info")
+        
+        return redirect(url_for("cart_view"))
 
     @app.get("/receipt/<int:sale_id>")
     def receipt(sale_id: int):

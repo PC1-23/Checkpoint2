@@ -21,6 +21,12 @@
             <td>{{ it.qty }}</td>
             <td>{{ '%.2f' % (it.unit / 100.0) }}</td>
             <td>{{ '%.2f' % (it.line / 100.0) }}</td>
+            <td>
+              <form method="post" action="/cart/remove" style="display: inline;">
+                <input type="hidden" name="product_id" value="{{ it.id }}">
+                <button type="submit" onclick="return confirm('Remove {{ it.name }} from cart?')">Remove</button>
+              </form>
+            </td>
           </tr>
         {% endfor %}
       </table>
