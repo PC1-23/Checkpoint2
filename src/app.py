@@ -1,4 +1,6 @@
 from __future__ import annotations
+from .product_repo import AProductRepo
+
 
 import os
 from pathlib import Path
@@ -24,7 +26,7 @@ def create_app() -> Flask:
         return get_connection(db_path)
 
     def get_repo(conn: sqlite3.Connection) -> SalesRepo:
-        return SalesRepo(conn, ProductRepo())
+        return SalesRepo(conn, AProductRepo(conn))
 
     @app.route("/")
     def index():
