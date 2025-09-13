@@ -1,4 +1,28 @@
 -- =============================
+-- Partner A: User & Product Schema  
+-- =============================
+
+-- Table: user
+CREATE TABLE IF NOT EXISTS user (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL
+);
+
+-- Table: product
+CREATE TABLE IF NOT EXISTS product (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    price_cents INTEGER NOT NULL CHECK(price_cents >= 0),
+    stock INTEGER NOT NULL CHECK(stock >= 0),
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1))
+);
+
+-- Indexes for better performance
+CREATE INDEX IF NOT EXISTS idx_product_active ON product(active);
+CREATE INDEX IF NOT EXISTS idx_product_name ON product(name);
+
+
+-- =============================
 -- Partner B: Sales & Payment Schema
 -- =============================
 
