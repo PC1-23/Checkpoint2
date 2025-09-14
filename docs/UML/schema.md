@@ -9,23 +9,23 @@ erDiagram
 
   USER {
     int id PK
-    text name
-    text username UNIQUE
-    text password
+    string name
+    string username
+    string password
   }
   PRODUCT {
     int id PK
-    text name UNIQUE
+    string name
     int price_cents
     int stock
-    int active (0/1)
+    boolean active
   }
   SALE {
     int id PK
     int user_id FK
-    datetime sale_time
+    date sale_time
     int total_cents
-    text status
+    string status
   }
   SALE_ITEM {
     int sale_id FK
@@ -35,9 +35,11 @@ erDiagram
   }
   PAYMENT {
     int sale_id FK
-    text method
+    string method
     int amount_cents
-    text status
-    text ref
+    string status
+    string ref
   }
 ```
+
+Note: In the actual SQLite schema, `product.name` is UNIQUE. Mermaid ER diagrams don’t support marking unique constraints directly, so it’s documented here.
