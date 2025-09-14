@@ -1,38 +1,4 @@
-# CheckPoint1
- - project description
-	 A simple 2-tier retail prototype:
-	 - Tier 1: minimal web UI (Flask) for listing products, cart, and checkout.
-	 - Tier 2: SQLite database for persistent storage (Product, Sale, SaleItem, Payment).
-	 Focus: clean structure, persistence abstraction (DAO), testing, and docs.
 
- - setup/run/test instructions
-	 Prerequisites: Python 3.10+ (venv recommended)
-
-	 Create venv and install deps:
-	 ```bash
-	 python -m venv .venv
-	 source .venv/bin/activate
-	 pip install -r requirements.txt
-	 ```
-
-	 Initialize the database (idempotent):
-	 ```bash
-	 python -m src.main
-	 ```
-
-		
-		```bash
-		python -m src.seed
-		```
-	
-
-		Run the web UI (Flask):
-	 ```bash
-	 python -m src.app
-	 ```
-	 Open http://127.0.0.1:5000 and try adding to cart and checkout.
-
-	 Run tests (pytest):
 	# CheckPoint1
 
 	Simple two-tier retail prototype.
