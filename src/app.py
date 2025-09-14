@@ -35,19 +35,22 @@ def create_app() -> Flask:
 
     @app.route("/products")
     def products():
+        q = request.args.get("q", "").strip()
         conn = get_conn()
         try:
             try:
-                rows = conn.execute(
-                    "SELECT id, name, price_cents, stock, active FROM product WHERE active = 1 ORDER BY id"
-                ).fetchall()
-            except Exception as e:
+                repo = AProductRepo(conn)
+                if q:
+                    rows = repo.search_products(q)
+                else:
+                    rows = repo.get_all_products()
+            except Exception:
                 rows = []
                 flash(
                     "Product table not available. Partner A needs to add user/product schema and seed.",
                     "error",
                 )
-            return render_template("products.html", products=rows)
+            return render_template("products.html", products=rows, q=q)
         finally:
             conn.close()
 
@@ -135,13 +138,20 @@ def create_app() -> Flask:
                     (username,)
                 ).fetchone()
                 
-                if user and check_password_hash(user["password"], password):
-                    session["user_id"] = user["id"]
-                    session["username"] = user["username"]
-                    flash("Login successful!", "success")
-                    return redirect(url_for("products"))
-                else:
-                    flash("Invalid username or password", "error")
+                if user:
+                    try:
+                        ok = check_password_hash(user["password"], password)
+                    except ValueError as e:
+                        # Handle unsupported hash types (e.g., scrypt) gracefully
+                        flash("Your account uses an unsupported password hash. Please reset your password or contact support.", "error")
+                        ok = False
+                    if ok:
+                        session["user_id"] = user["id"]
+                        session["username"] = user["username"]
+                        flash("Login successful!", "success")
+                        return redirect(url_for("products"))
+                
+                flash("Invalid username or password", "error")
             finally:
                 conn.close()
         
@@ -167,8 +177,8 @@ def create_app() -> Flask:
                 if existing:
                     flash("Username already exists", "error")
                 else:
-                    # Create user
-                    hashed_password = generate_password_hash(password)
+                    # Create user with PBKDF2 for compatibility across environments
+                    hashed_password = generate_password_hash(password, method="pbkdf2:sha256")
                     conn.execute(
                         "INSERT INTO user (name, username, password) VALUES (?, ?, ?)",
                         (name, username, hashed_password)

@@ -3,6 +3,11 @@
   <head><title>Products</title></head>
   <body>
     <h1>Products</h1>
+    <form method="get" action="/products" style="margin: 10px 0;">
+      <input type="text" name="q" placeholder="Search products by name" value="{{ q or '' }}">
+      <button type="submit">Search</button>
+      {% if q %}<span>Showing results for "{{ q }}"</span>{% endif %}
+    </form>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <ul>
@@ -25,7 +30,7 @@
       </form>
   </div>
 
-    <table border="1">
+  <table border="1">
       <tr><th>ID</th><th>Name</th><th>Price</th><th>Stock</th><th>Action</th></tr>
       {% for p in products %}
         <tr>

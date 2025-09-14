@@ -22,15 +22,26 @@ def seed_users(conn):
     
     for name, username, password in users:
         # Check if user already exists
-        existing = conn.execute("SELECT id FROM user WHERE username = ?", (username,)).fetchone()
+        existing = conn.execute("SELECT id, password FROM user WHERE username = ?", (username,)).fetchone()
+        hashed_password = generate_password_hash(password, method="pbkdf2:sha256")
         if not existing:
-            # Hash the password before storing
-            hashed_password = generate_password_hash(password)
+            # Create user with a PBKDF2 hash for maximum compatibility
             conn.execute(
                 "INSERT INTO user (name, username, password) VALUES (?, ?, ?)",
                 (name, username, hashed_password)
             )
             print(f"Inserted user: {username}")
+        else:
+            # If an existing demo user has an unsupported hash (e.g., scrypt), update to PBKDF2
+            pwd = existing["password"] if isinstance(existing, sqlite3.Row) else existing[1]
+            if isinstance(pwd, (bytes, bytearray)):
+                pwd = pwd.decode("utf-8")
+            if isinstance(pwd, str) and pwd.startswith("scrypt:"):
+                conn.execute(
+                    "UPDATE user SET password = ? WHERE id = ?",
+                    (hashed_password, existing["id"] if isinstance(existing, sqlite3.Row) else existing[0])
+                )
+                print(f"Updated password hash to PBKDF2 for user: {username}")
     
     conn.commit()
     print(f"Seeded users with authentication")
@@ -57,7 +68,7 @@ def seed_products(conn):
 
 def main():
     """Main seeding function"""
-    db_path = 'app.sqlite'
+    db_path = os.environ.get('APP_DB_PATH', 'app.sqlite')
     print(f"Seeding database at: {db_path}")
     
     if not os.path.exists(db_path):
