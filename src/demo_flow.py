@@ -14,7 +14,7 @@ from pathlib import Path
 from .dao import get_connection, SalesRepo, ProductRepo
 from .payment import process as payment_process
 from .main import init_db
-from .dev_seed import ensure_core_tables, seed  # DEV-ONLY
+from .seed import seed_users, seed_products
 
 
 def main():

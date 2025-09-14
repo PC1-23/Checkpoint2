@@ -20,13 +20,11 @@
 	 python -m src.main
 	 ```
 
-		DEV-ONLY seed helper (temporary until Partner A ships user/product schema & seeds):
+		
 		```bash
-		python -m src.dev_seed
+		python -m src.seed
 		```
-		Notes:
-	 - This helper creates minimal user/product tables and demo rows so the UI works.
-	 - Partner A will replace this with official schema and seed; this script is safe to delete then.
+	
 
 		Run the web UI (Flask):
 	 ```bash

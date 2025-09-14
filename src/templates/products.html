@@ -12,6 +12,19 @@
         </ul>
       {% endif %}
     {% endwith %}
+    <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #ccc;">
+      <h3>Add Product by ID</h3>
+      <form method="post" action="/cart/add" style="display: flex; gap: 10px; align-items: center;">
+          <label for="product_id">Product ID:</label>
+          <input type="number" name="product_id" id="product_id" min="1" required style="width: 80px;">
+          
+          <label for="qty">Quantity:</label>
+          <input type="number" name="qty" id="qty" min="1" value="1" required style="width: 80px;">
+          
+          <button type="submit">Add to Cart</button>
+      </form>
+  </div>
+
     <table border="1">
       <tr><th>ID</th><th>Name</th><th>Price</th><th>Stock</th><th>Action</th></tr>
       {% for p in products %}
