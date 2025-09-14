@@ -1,6 +1,7 @@
 from __future__ import annotations
 from .product_repo import AProductRepo
 
+from werkzeug.security import generate_password_hash, check_password_hash
 
 import os
 from pathlib import Path
@@ -30,7 +31,7 @@ def create_app() -> Flask:
 
     @app.route("/")
     def index():
-        return redirect(url_for("products"))
+        return redirect(url_for("login"))
 
     @app.route("/products")
     def products():
@@ -121,10 +122,80 @@ def create_app() -> Flask:
         flash("Cart cleared", "info")
         return redirect(url_for("products"))
 
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        if request.method == "POST":
+            username = request.form["username"]
+            password = request.form["password"]
+            
+            conn = get_conn()
+            try:
+                user = conn.execute(
+                    "SELECT id, username, password FROM user WHERE username = ?", 
+                    (username,)
+                ).fetchone()
+                
+                if user and check_password_hash(user["password"], password):
+                    session["user_id"] = user["id"]
+                    session["username"] = user["username"]
+                    flash("Login successful!", "success")
+                    return redirect(url_for("products"))
+                else:
+                    flash("Invalid username or password", "error")
+            finally:
+                conn.close()
+        
+        return render_template("login.html")
+
+    @app.route("/logout")
+    def logout():
+        session.clear()
+        flash("You have been logged out", "info")
+        return redirect(url_for("login"))
+
+    @app.route("/register", methods=["GET", "POST"])
+    def register():
+        if request.method == "POST":
+            name = request.form["name"]
+            username = request.form["username"]
+            password = request.form["password"]
+            
+            conn = get_conn()
+            try:
+                # Check if username exists
+                existing = conn.execute("SELECT id FROM user WHERE username = ?", (username,)).fetchone()
+                if existing:
+                    flash("Username already exists", "error")
+                else:
+                    # Create user
+                    hashed_password = generate_password_hash(password)
+                    conn.execute(
+                        "INSERT INTO user (name, username, password) VALUES (?, ?, ?)",
+                        (name, username, hashed_password)
+                    )
+                    conn.commit()
+                    flash("Registration successful! Please login.", "success")
+                    return redirect(url_for("login"))
+            finally:
+                conn.close()
+        
+        # Return register template (you'd need to create this)
+        return render_template("register.html")
+
+    # Add login requirement to protected routes
+    def login_required(f):
+        from functools import wraps
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if "user_id" not in session:
+                flash("Please login to access this page", "error")
+                return redirect(url_for("login"))
+            return f(*args, **kwargs)
+        return decorated_function
     @app.post("/checkout")
     def checkout():
         pay_method = request.form.get("payment_method", "CARD")
-        user_id = int(os.environ.get("APP_DEMO_USER_ID", "1"))
+        user_id = session["user_id"]
         cart: Dict[str, int] = session.get("cart", {})
         cart_list = [(int(pid), qty) for pid, qty in cart.items()]
 
@@ -179,7 +250,6 @@ def create_app() -> Flask:
         return render_template("receipt.html", sale=sale, items=items, payment=payment)
 
     return app
-
 
 if __name__ == "__main__":
     app = create_app()

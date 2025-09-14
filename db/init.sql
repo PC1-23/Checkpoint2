@@ -5,7 +5,9 @@
 -- Table: user
 CREATE TABLE IF NOT EXISTS user (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL
+    name TEXT NOT NULL,
+    username TEXT UNIQUE,
+    password TEXT
 );
 
 -- Table: product
