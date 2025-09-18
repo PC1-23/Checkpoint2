@@ -8,6 +8,9 @@
       <button type="submit">Search</button>
       {% if q %}<span>Showing results for "{{ q }}"</span>{% endif %}
     </form>
+    {% if q %}
+      <p><a href="/products">&larr; Back to Products</a></p>
+    {% endif %}
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         <ul>

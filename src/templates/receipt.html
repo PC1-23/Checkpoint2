@@ -7,10 +7,11 @@
     <p>Status: {{ sale.status }}</p>
     <h2>Items</h2>
     <table border="1">
-      <tr><th>Product ID</th><th>Qty</th><th>Unit</th></tr>
+      <tr><th>Product ID</th><th>Product Name</th><th>Qty</th><th>Unit</th></tr>
       {% for it in items %}
         <tr>
           <td>{{ it.product_id }}</td>
+          <td>{{ it.product_name }}</td>
           <td>{{ it.quantity }}</td>
           <td>{{ '%.2f' % (it.price_cents / 100.0) }}</td>
         </tr>
