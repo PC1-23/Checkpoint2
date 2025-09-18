@@ -120,5 +120,3 @@ flowchart TD
 ```
 
 ---
-
-Each diagram above fulfills a specific UML view as required. You can copy these Mermaid diagrams into your documentation or render them using a Mermaid-compatible tool.
