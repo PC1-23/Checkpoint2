@@ -248,7 +248,9 @@ def create_app() -> Flask:
                 (sale_id,),
             ).fetchone()
             items = conn.execute(
-                "SELECT product_id, quantity, price_cents FROM sale_item WHERE sale_id = ?",
+                "SELECT si.product_id, p.name as product_name, si.quantity, si.price_cents "
+                "FROM sale_item si JOIN product p ON si.product_id = p.id "
+                "WHERE si.sale_id = ?",
                 (sale_id,),
             ).fetchall()
             payment = conn.execute(
