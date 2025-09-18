@@ -56,19 +56,16 @@ sequenceDiagram
   end
 ```
 
+
 ## Deployment View
 
 ```mermaid
-deploymentDiagram
-  node Client {
-    UserBrowser
-  }
-  node Server {
-    FlaskApp
-  }
-  database SQLite
+flowchart TD
+  UserBrowser["User Browser (Client)"]
+  FlaskApp["Flask App (Server)"]
+  SQLiteDB[("SQLite DB")]
   UserBrowser --> FlaskApp
-  FlaskApp --> SQLite
+  FlaskApp --> SQLiteDB
 ```
 
 ## Implementation View: Package/Module Diagram
@@ -94,21 +91,32 @@ flowchart TD
   app --> main
 ```
 
+
 ## Use-Case View
 
 ```mermaid
-usecaseDiagram
-  actor User
-  User --> (Register)
-  User --> (Login)
-  User --> (Browse Products)
-  User --> (Search Products)
-  User --> (Add to Cart)
-  User --> (Checkout)
-  User --> (View Receipt)
-  User --> (View Cart)
-  User --> (Remove from Cart)
-  User --> (Clear Cart)
+flowchart TD
+  User((User))
+  Register((Register))
+  Login((Login))
+  Browse((Browse Products))
+  Search((Search Products))
+  AddCart((Add to Cart))
+  Checkout((Checkout))
+  Receipt((View Receipt))
+  ViewCart((View Cart))
+  RemoveCart((Remove from Cart))
+  ClearCart((Clear Cart))
+  User --> Register
+  User --> Login
+  User --> Browse
+  User --> Search
+  User --> AddCart
+  User --> Checkout
+  User --> Receipt
+  User --> ViewCart
+  User --> RemoveCart
+  User --> ClearCart
 ```
 
 ---
