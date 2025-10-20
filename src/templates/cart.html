@@ -1,6 +1,23 @@
 <!doctype html>
 <html>
-  <head><title>Cart</title></head>
+  <head>
+    <title>Cart</title>
+    <style>
+      .flash-badge {
+        background-color: #ff0000;
+        color: white;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        margin-left: 5px;
+      }
+      .original-price {
+        text-decoration: line-through;
+        color: #999;
+        font-size: 0.9em;
+      }
+    </style>
+  </head>
   <body>
     <h1>Cart</h1>
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -14,13 +31,25 @@
     {% endwith %}
     {% if items %}
       <table border="1">
-        <tr><th>Product</th><th>Qty</th><th>Unit</th><th>Line</th></tr>
+        <tr><th>Product</th><th>Qty</th><th>Unit</th><th>Line</th><th>Action</th></tr>
         {% for it in items %}
           <tr>
-            <td>{{ it.name }}</td>
+            <td>
+              {{ it.name }}
+              {% if it.is_flash_sale %}
+                <span class="flash-badge">⚡ FLASH SALE</span>
+              {% endif %}
+            </td>
             <td>{{ it.qty }}</td>
-            <td>{{ '%.2f' % (it.unit / 100.0) }}</td>
-            <td>{{ '%.2f' % (it.line / 100.0) }}</td>
+            <td>
+              {% if it.is_flash_sale %}
+                <span class="original-price">${{ '%.2f' % (it.original_price / 100.0) }}</span><br>
+                <strong style="color: #ff0000;">${{ '%.2f' % (it.unit / 100.0) }}</strong>
+              {% else %}
+                ${{ '%.2f' % (it.unit / 100.0) }}
+              {% endif %}
+            </td>
+            <td>${{ '%.2f' % (it.line / 100.0) }}</td>
             <td>
               <form method="post" action="/cart/remove" style="display: inline;">
                 <input type="hidden" name="product_id" value="{{ it.id }}">
@@ -30,7 +59,7 @@
           </tr>
         {% endfor %}
       </table>
-      <p>Total: <b>{{ '%.2f' % (total / 100.0) }}</b></p>
+      <p>Total: <b>${{ '%.2f' % (total / 100.0) }}</b></p>
       <form method="post" action="/checkout">
         <select name="payment_method">
           <option value="CARD">Card</option>
@@ -47,4 +76,4 @@
     {% endif %}
     <p><a href="/products">Back to Products</a></p>
   </body>
-  </html>
+</html>

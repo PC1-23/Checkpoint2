@@ -98,14 +98,14 @@ def create_app() -> Flask:
         items = []
         total = 0
         try:
+            repo = AProductRepo(conn)  # Use your repo instead of raw SQL
             for pid_str, qty in cart.items():
                 pid = int(pid_str)
-                prod = conn.execute(
-                    "SELECT id, name, price_cents, stock, active FROM product WHERE id = ?",
-                    (pid,),
-                ).fetchone()
+                prod = repo.get_product(pid)  # This returns flash price if active!
+                
                 if not prod:
                     continue
+                
                 unit = int(prod["price_cents"])
                 items.append({
                     "id": pid,
@@ -113,6 +113,8 @@ def create_app() -> Flask:
                     "qty": qty,
                     "unit": unit,
                     "line": unit * qty,
+                    "is_flash_sale": prod.get("is_flash_sale", False),
+                    "original_price": prod.get("original_price", unit)
                 })
                 total += unit * qty
         finally:
@@ -239,6 +241,9 @@ def create_app() -> Flask:
         
         return redirect(url_for("cart_view"))
 
+
+    
+
     @app.get("/receipt/<int:sale_id>")
     def receipt(sale_id: int):
         conn = get_conn()
@@ -261,7 +266,65 @@ def create_app() -> Flask:
             conn.close()
         return render_template("receipt.html", sale=sale, items=items, payment=payment)
 
+
+    @app.get("/admin/flash-sale")
+    def admin_flash_sale():
+        """Admin page to manage flash sales"""
+        conn = get_conn()
+        try:
+            cursor = conn.execute("""
+                SELECT id, name, price_cents, flash_sale_active, flash_sale_price_cents
+                FROM product 
+                WHERE active = 1
+                ORDER BY name
+            """)
+            products = cursor.fetchall()
+            return render_template("admin_flash_sale.html", products=products)
+        finally:
+            conn.close()
+
+    @app.post("/admin/flash-sale/set")
+    def admin_flash_sale_set():
+        """Set a product as flash sale"""
+        product_id = int(request.form.get("product_id"))
+        flash_price = float(request.form.get("flash_price"))
+        flash_price_cents = int(flash_price * 100)
+        
+        conn = get_conn()
+        try:
+            conn.execute("""
+                UPDATE product 
+                SET flash_sale_active = 1, flash_sale_price_cents = ?
+                WHERE id = ?
+            """, (flash_price_cents, product_id))
+            conn.commit()
+            flash("Flash sale activated!", "success")
+        finally:
+            conn.close()
+        
+        return redirect(url_for("admin_flash_sale"))
+
+    @app.post("/admin/flash-sale/remove")
+    def admin_flash_sale_remove():
+        """Remove flash sale from product"""
+        product_id = int(request.form.get("product_id"))
+        
+        conn = get_conn()
+        try:
+            conn.execute("""
+                UPDATE product 
+                SET flash_sale_active = 0, flash_sale_price_cents = NULL
+                WHERE id = ?
+            """, (product_id,))
+            conn.commit()
+            flash("Flash sale removed", "info")
+        finally:
+            conn.close()
+        
+        return redirect(url_for("admin_flash_sale"))
+
     return app
+    
 
 if __name__ == "__main__":
     app = create_app()
