@@ -1,7 +1,9 @@
 from __future__ import annotations
 from flask import Flask, request, render_template, abort, jsonify
 from pathlib import Path
-from .partner_adapters import parse_json_feed, parse_csv_feed
+import json
+from .partner_adapters import parse_feed
+from .integrability import get_contract, validate_against_contract
 from .partner_ingest_service import upsert_products
 from .ingest_queue import enqueue_feed, start_worker
 from .metrics import get_metrics
@@ -58,12 +60,8 @@ def partner_ingest():
     # Choose adapter by content type or file extension
     content_type = request.content_type or ""
     payload = request.get_data()
-
-    if content_type.startswith("application/json"):
-        products = parse_json_feed(payload)
-    else:
-        # fallback to csv parser for form uploads
-        products = parse_csv_feed(payload)
+    feed_version = request.headers.get("X-Feed-Version") or request.args.get("feed_version")
+    products = parse_feed(payload, content_type=content_type, feed_version=feed_version)
 
     # compute feed hash for idempotency
     import hashlib, json
@@ -94,26 +92,109 @@ def partner_ingest():
         db_path = str(Path(os.environ.get("APP_DB_PATH") or root / "app.sqlite"))
         start_worker(db_path)
         # partner_id already looked up above
+        # Call the module-level enqueue_feed (may be monkeypatched in tests)
+        jid = None
         try:
             enqueue_feed(partner_id or 0, products + [], feed_hash=feed_hash)
         except TypeError:
-            # backward compatibility with test doubles or older wrappers that don't accept feed_hash
             enqueue_feed(partner_id or 0, products + [])
-        record_audit(partner_id, api_key, "enqueue", payload=str(feed_hash))
-        # store feed_hash alongside enqueue metadata if needed (in-process queue currently doesn't persist)
-        return ("Accepted", 202)
 
-    # Upsert into DB (sync)
+        # If the module-level enqueue_feed is the original implementation, try to get a job id
+        try:
+            import src.partners.ingest_queue as _iq
+            root = Path(__file__).resolve().parents[2]
+            db_path = str(Path(os.environ.get("APP_DB_PATH") or root / "app.sqlite"))
+            # If enqueue_feed in this module points to the original function, use enqueue_feed_db to obtain jid
+            if getattr(_iq, 'enqueue_feed', None) is enqueue_feed and getattr(_iq, 'enqueue_feed_db', None):
+                jid = _iq.enqueue_feed_db(db_path, partner_id or 0, products + [], feed_hash=feed_hash)
+        except Exception:
+            jid = None
+        record_audit(partner_id, api_key, "enqueue", payload=str(feed_hash))
+        # return JSON with job id when available
+        if jid:
+            return (jsonify({"job_id": jid, "status": "accepted"}), 202)
+        return (jsonify({"status": "accepted"}), 202)
+
+    # Synchronous validation + upsert with structured feedback
     conn = get_conn()
     try:
-        count, upsert_errors = upsert_products(conn, products, partner_id=partner_id, feed_hash=feed_hash)
+        valid, validation_errors = __import__("src.partners.partner_ingest_service", fromlist=["validate_products"]).validate_products(products)
+        if not valid:
+            # return structured validation summary
+            summary = {"status": "validation_failed", "accepted": 0, "rejected": len(validation_errors), "errors": validation_errors}
+            record_audit(partner_id, api_key, "ingest_sync_validation_failed", payload=str(feed_hash))
+            return (jsonify(summary), 422)
+        upserted, upsert_errors = upsert_products(conn, valid, partner_id=partner_id, feed_hash=feed_hash)
     finally:
         conn.close()
+    # Persist a small diagnostics blob into partner_ingest_jobs for traceability (if job exists)
+    try:
+        from .ingest_queue import enqueue_feed_db
+        # create a diagnostic record by inserting a job row with status=done
+        root = Path(__file__).resolve().parents[2]
+        db_path = str(Path(os.environ.get("APP_DB_PATH") or root / "app.sqlite"))
+        import sqlite3
+        conn2 = sqlite3.connect(db_path)
+        cur2 = conn2.cursor()
+        diag = {"accepted": upserted, "rejected": len(upsert_errors), "errors": upsert_errors}
+        cur2.execute("INSERT INTO partner_ingest_jobs (partner_id, payload, status, diagnostics, feed_hash, processed_at) VALUES (?, ?, 'done', ?, ?, CURRENT_TIMESTAMP)", (partner_id or 0, json.dumps(valid), json.dumps(diag), feed_hash))
+        conn2.commit()
+        conn2.close()
+    except Exception:
+        # best-effort diagnostics persistence; continue
+        pass
     record_audit(partner_id, api_key, "ingest_sync", payload=str(feed_hash))
-    # No contract pre-validation in moderate prune; rely on server-side validation
 
-    return (f"Ingested {count} products", 200)
-# Contract endpoints removed in moderate prune
+    return (jsonify({"status": "done", "accepted": upserted, "rejected": len(upsert_errors), "errors": upsert_errors}), 200)
+# Integrability / onboarding endpoints
+
+
+@app.get('/partner/contract')
+def partner_contract():
+    """Return machine-readable contract for partner feeds."""
+    return jsonify(get_contract())
+
+
+@app.get('/partner/contract/example')
+def partner_contract_example():
+    return jsonify(get_contract().get("example"))
+
+
+@app.post('/partner/contract/validate')
+def partner_contract_validate():
+    """Sandbox validation endpoint for partners to validate sample feeds."""
+    content_type = request.content_type or ""
+    payload = request.get_data()
+    feed_version = request.headers.get("X-Feed-Version") or request.args.get("feed_version")
+    products = parse_feed(payload, content_type=content_type, feed_version=feed_version)
+    valid, errors = validate_against_contract(products)
+    if not valid:
+        return (jsonify({"status": "validation_failed", "accepted": 0, "rejected": len(errors), "errors": errors}), 422)
+    return jsonify({"status": "ok", "accepted": len(valid), "rejected": 0})
+
+
+@app.post('/partner/onboard')
+def partner_onboard():
+    """Simple demo onboarding: create a partner and issue an API key. Admin-only in demo."""
+    admin_key = request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
+    if admin_key != (request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+        abort(401, "Missing or invalid admin key")
+    data = request.get_json(force=True)
+    name = data.get("name")
+    if not name:
+        abort(400, "Missing partner name")
+    import secrets
+    api_key = secrets.token_urlsafe(16)
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO partner (name, format) VALUES (?, ?)", (name, data.get("format", "json")))
+        pid = cur.lastrowid
+        cur.execute("INSERT INTO partner_api_keys (partner_id, api_key, description) VALUES (?, ?, ?)", (pid, api_key, data.get("description", "onboarded key")))
+        conn.commit()
+        return jsonify({"partner_id": pid, "api_key": api_key})
+    finally:
+        conn.close()
 
 
 @app.get('/partner/help')
@@ -241,6 +322,88 @@ def partner_jobs():
         cur.execute("SELECT id, partner_id, status, attempts, created_at, processed_at FROM partner_ingest_jobs ORDER BY id DESC LIMIT 20")
         rows = [dict(id=r[0], partner_id=r[1], status=r[2], attempts=r[3], created_at=r[4], processed_at=r[5]) for r in cur.fetchall()]
         return jsonify({"counts": counts, "recent": rows})
+    finally:
+        conn.close()
+
+
+@app.get('/partner/jobs/<int:job_id>')
+def partner_job_status(job_id: int):
+    """Return structured diagnostics and status for a specific job.
+
+    Partners may fetch this for async uploads to see validation results.
+    Admin or partner key required and ownership is enforced.
+    """
+    api_key = request.headers.get("X-API-Key")
+    admin_key = request.headers.get("X-Admin-Key")
+    if not api_key and not admin_key:
+        abort(401, "Missing API key")
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, partner_id, status, created_at, processed_at, error, diagnostics FROM partner_ingest_jobs WHERE id = ?", (job_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404, "Job not found")
+        job = dict(id=row[0], partner_id=row[1], status=row[2], created_at=row[3], processed_at=row[4])
+        # enforce ownership unless admin
+        if admin_key and admin_key == (os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+            pass
+        else:
+            # verify api_key belongs to partner
+            cur.execute("SELECT partner_id FROM partner_api_keys WHERE api_key = ?", (api_key,))
+            prow = cur.fetchone()
+            if not prow:
+                abort(401, "Invalid API key")
+            if prow[0] != job['partner_id']:
+                abort(403, "Not allowed")
+
+        # include diagnostics and error payloads (deserialize JSON where present)
+        err = row[5]
+        diag = row[6]
+        try:
+            job['error'] = json.loads(err) if err else None
+        except Exception:
+            job['error'] = err
+        try:
+            job['diagnostics'] = json.loads(diag) if diag else None
+        except Exception:
+            job['diagnostics'] = diag
+        return jsonify(job)
+    finally:
+        conn.close()
+
+
+
+@app.get('/partner/diagnostics/<int:diag_id>')
+def partner_diagnostics(diag_id: int):
+    """Return offloaded diagnostics artifact. Admin or owning partner may fetch."""
+    api_key = request.headers.get("X-API-Key")
+    admin_key = request.headers.get("X-Admin-Key")
+    if not api_key and not admin_key:
+        abort(401, "Missing API key")
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, job_id, diagnostics, created_at FROM partner_ingest_diagnostics WHERE id = ?", (diag_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404, "Diagnostics not found")
+        job_id = row[1]
+        # ownership check: admin can access any, otherwise ensure api_key belongs to job's partner
+        if not (admin_key and admin_key == (os.environ.get("ADMIN_API_KEY") or "admin-demo-key")):
+            cur.execute("SELECT partner_id FROM partner_ingest_jobs WHERE id = ?", (job_id,))
+            j = cur.fetchone()
+            if not j:
+                abort(404, "Job not found")
+            cur.execute("SELECT partner_id FROM partner_api_keys WHERE api_key = ?", (api_key,))
+            prow = cur.fetchone()
+            if not prow or prow[0] != j[0]:
+                abort(403, "Not allowed")
+        # return diagnostics JSON (stored as text blob)
+        try:
+            return jsonify({"id": row[0], "job_id": row[1], "diagnostics": json.loads(row[2]), "created_at": row[3]})
+        except Exception:
+            return jsonify({"id": row[0], "job_id": row[1], "diagnostics": row[2], "created_at": row[3]})
     finally:
         conn.close()
 

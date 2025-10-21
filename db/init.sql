@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS partner_ingest_jobs (
 	feed_hash TEXT,
 	status TEXT NOT NULL DEFAULT 'pending', -- pending, in_progress, done, failed
 	attempts INTEGER NOT NULL DEFAULT 0,
+	diagnostics TEXT,
 	next_run TIMESTAMP,
 	max_attempts INTEGER NOT NULL DEFAULT 5,
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -82,6 +83,16 @@ CREATE TABLE IF NOT EXISTS partner_ingest_audit (
 	action TEXT NOT NULL,
 	payload TEXT,
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- Optional: store large diagnostics offloaded from partner_ingest_jobs
+CREATE TABLE IF NOT EXISTS partner_ingest_diagnostics (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	job_id INTEGER NOT NULL,
+	diagnostics TEXT NOT NULL,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	FOREIGN KEY (job_id) REFERENCES partner_ingest_jobs(id) ON DELETE CASCADE
 );
 
 

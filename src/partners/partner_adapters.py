@@ -65,3 +65,19 @@ def parse_csv_feed(payload: bytes) -> List[Dict]:
 
 
 # XML adapter removed in moderate prune; keep JSON and CSV only
+
+
+def parse_feed(payload: bytes, content_type: str = "application/json", feed_version: str | None = None) -> List[Dict]:
+    """Dispatch to the appropriate adapter based on content type and optional feed_version.
+
+    This keeps a single call site for routes and allows future versioned
+    adapters to be added without changing route logic.
+    """
+    # normalize content type
+    ct = (content_type or "").lower()
+    # Currently support JSON and CSV only
+    if ct.startswith("application/json") or ct.endswith("+json"):
+        # future: dispatch by feed_version if needed
+        return parse_json_feed(payload)
+    # fallback to csv parser for other content types / form uploads
+    return parse_csv_feed(payload)

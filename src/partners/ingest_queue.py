@@ -90,18 +90,34 @@ def worker_loop(db_path: str, poll_interval: float = 0.1):
                     record_audit(partner_id, None, "worker_processed_empty", payload=str(jid))
                 else:
                     valid, errors = validate_products(products)
+                    cur = conn.cursor()
                     if valid:
                         upserted, upsert_errors = upsert_products(conn, valid, partner_id=partner_id)
                         logger.info("Ingest processed job=%s partner=%s upserted=%s errors=%s", jid, partner_id, upserted, upsert_errors)
-                        cur = conn.cursor()
-                        cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP WHERE id = ?", (jid,))
+                        diag = {"accepted": upserted, "rejected": len(upsert_errors), "errors": upsert_errors}
+                        djson = json.dumps(diag)
+                        # Offload large diagnostics to separate table to avoid bloating job rows
+                        if len(djson) > 2000:
+                            odcur = conn.cursor()
+                            odcur.execute("INSERT INTO partner_ingest_diagnostics (job_id, diagnostics) VALUES (?, ?)", (jid, djson))
+                            off_id = odcur.lastrowid
+                            cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP, diagnostics = ? WHERE id = ?", (json.dumps({"errors_link": f"/partner/diagnostics/{off_id}"}), jid))
+                        else:
+                            cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP, diagnostics = ? WHERE id = ?", (djson, jid))
                         conn.commit()
                         incr("processed")
                         record_audit(partner_id, None, "worker_processed", payload=str(jid))
                     else:
                         logger.warning("Ingest validation failed for job=%s partner=%s errors=%s", jid, partner_id, errors)
-                        cur = conn.cursor()
-                        cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ? WHERE id = ?", (json.dumps(errors), jid))
+                        diag = {"accepted": 0, "rejected": len(errors), "errors": errors}
+                        djson = json.dumps(diag)
+                        if len(djson) > 2000:
+                            odcur = conn.cursor()
+                            odcur.execute("INSERT INTO partner_ingest_diagnostics (job_id, diagnostics) VALUES (?, ?)", (jid, djson))
+                            off_id = odcur.lastrowid
+                            cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ?, diagnostics = ? WHERE id = ?", (json.dumps(errors), json.dumps({"errors_link": f"/partner/diagnostics/{off_id}"}), jid))
+                        else:
+                            cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ?, diagnostics = ? WHERE id = ?", (json.dumps(errors), djson, jid))
                         conn.commit()
                         record_audit(partner_id, None, "worker_validation_failed", payload=json.dumps(errors))
             except Exception as e:
@@ -174,16 +190,38 @@ def process_next_job_once(db_path: str) -> Optional[Dict[str, Any]]:
             if valid:
                 upserted, upsert_errors = upsert_products(conn, valid, partner_id=partner_id)
                 cur = conn.cursor()
-                cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP WHERE id = ?", (jid,))
-                conn.commit()
-                record_audit(partner_id, None, "worker_processed", payload=str(jid))
-                return {"job_id": jid, "status": "done", "upserted": upserted}
+                diag = {"accepted": upserted, "rejected": len(upsert_errors), "errors": upsert_errors}
+                djson = json.dumps(diag)
+                if len(djson) > 2000:
+                    odcur = conn.cursor()
+                    odcur.execute("INSERT INTO partner_ingest_diagnostics (job_id, diagnostics) VALUES (?, ?)", (jid, djson))
+                    off_id = odcur.lastrowid
+                    cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP, diagnostics = ? WHERE id = ?", (json.dumps({"errors_link": f"/partner/diagnostics/{off_id}"}), jid))
+                    conn.commit()
+                    record_audit(partner_id, None, "worker_processed", payload=str(jid))
+                    return {"job_id": jid, "status": "done", "diagnostics": {"errors_link": f"/partner/diagnostics/{off_id}"}}
+                else:
+                    cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP, diagnostics = ? WHERE id = ?", (djson, jid))
+                    conn.commit()
+                    record_audit(partner_id, None, "worker_processed", payload=str(jid))
+                    return {"job_id": jid, "status": "done", "diagnostics": diag}
             else:
                 cur = conn.cursor()
-                cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ? WHERE id = ?", (json.dumps(errors), jid))
-                conn.commit()
-                record_audit(partner_id, None, "worker_validation_failed", payload=json.dumps(errors))
-                return {"job_id": jid, "status": "failed", "errors": errors}
+                diag = {"accepted": 0, "rejected": len(errors), "errors": errors}
+                djson = json.dumps(diag)
+                if len(djson) > 2000:
+                    odcur = conn.cursor()
+                    odcur.execute("INSERT INTO partner_ingest_diagnostics (job_id, diagnostics) VALUES (?, ?)", (jid, djson))
+                    off_id = odcur.lastrowid
+                    cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ?, diagnostics = ? WHERE id = ?", (json.dumps(errors), json.dumps({"errors_link": f"/partner/diagnostics/{off_id}"}), jid))
+                    conn.commit()
+                    record_audit(partner_id, None, "worker_validation_failed", payload=json.dumps(errors))
+                    return {"job_id": jid, "status": "failed", "diagnostics": {"errors_link": f"/partner/diagnostics/{off_id}"}}
+                else:
+                    cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ?, diagnostics = ? WHERE id = ?", (json.dumps(errors), djson, jid))
+                    conn.commit()
+                    record_audit(partner_id, None, "worker_validation_failed", payload=json.dumps(errors))
+                    return {"job_id": jid, "status": "failed", "diagnostics": diag}
         except Exception as e:
             cur = conn.cursor()
             cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ? WHERE id = ?", (str(e), jid))
