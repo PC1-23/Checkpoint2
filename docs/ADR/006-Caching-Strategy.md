@@ -51,88 +51,6 @@ We will implement **in-memory caching with TTL (Time-To-Live)** for flash sale p
 **What NOT to Cache:**
 1. User-specific data (cart contents, session data)
 2. Inventory levels (must be real-time for accuracy)
-```
-# NOTE: Superseded
-
-This ADR was superseded by `ADR-0017` (Caching Strategy for Flash Sale Performance).
-
-Please see `docs/ADR/0017-caching-strategy.md` for the canonical,
-persistently-numbered ADR content.
-
----
-
-Status: Superseded
-
-Superseded-by: ADR-0017
-
-Date superseded: 2025-10-21
-
-Rationale: Consolidated ADR numbering and canonical location
-
----
-
-For historical context, the original content has been preserved in
-repository history. The canonical active ADR is:
-
-- `docs/ADR/0017-caching-strategy.md`
-
-```
-
-# --- Original ADR (archived below) ---
-
-# ADR-006: Caching Strategy for Flash Sale Performance
-
-**Status:** Accepted
-
-**Date:** 2025-10-21
-
-**Decision Makers:** Flash Sales Team
-
----
-
-## Context
-
-Flash sales create predictable read-heavy workloads where thousands of users simultaneously browse the same product listings. Without caching, this creates several problems:
-
-**Performance Issues:**
-- Database becomes bottleneck with repeated identical queries
-- Every page load triggers flash sale time window calculations
-- High database CPU usage during traffic spikes
-- Slow response times degrade user experience
-
-**Scalability Concerns:**
-- Database connection pool exhaustion under load
-- Vertical scaling (bigger database server) is expensive
-- Horizontal scaling requires complex sharding
-
-**Cost:**
-- Excessive database I/O operations
-- Need for over-provisioned database capacity
-- Wasted resources executing identical queries repeatedly
-
-We need a caching mechanism that reduces database load while maintaining data freshness during flash sales.
-
----
-
-## Decision
-
-We will implement **in-memory caching with TTL (Time-To-Live)** for flash sale product listings using a simple cache implementation:
-
-**Cache Configuration:**
-- **Storage:** In-memory Python dictionary (single-process)
-- **TTL:** 30 seconds default (configurable per key)
-- **Eviction:** Automatic expiration based on timestamps
-- **Thread Safety:** Lock-based synchronization for concurrent access
-- **Cache Keys:** String-based identifiers (e.g., "flash_products")
-
-**What to Cache:**
-1. Active flash sale product listings
-2. Individual product flash sale status
-3. Effective prices (flash or regular)
-
-**What NOT to Cache:**
-1. User-specific data (cart contents, session data)
-2. Inventory levels (must be real-time for accuracy)
 3. Checkout transactions (require fresh data)
 
 **Implementation:** `src/flash_sales/cache.py`
@@ -181,18 +99,18 @@ We will implement **in-memory caching with TTL (Time-To-Live)** for flash sale p
 
 **Why Not Shorter (5-10 seconds)?**
 - More frequent cache misses reduce benefit
-- Increased database load
-- Minimal improvement in data freshness
+-  Increased database load
+-  Minimal improvement in data freshness
 
 **Why Not Longer (60+ seconds)?**
-- Flash sale end times might be inaccurate
-- Stock levels could be outdated
-- User experience suffers from stale data
+-  Flash sale end times might be inaccurate
+-  Stock levels could be outdated
+-  User experience suffers from stale data
 
 **Sweet Spot:** 30 seconds balances performance and freshness
-- Significant load reduction (most requests served from cache)
-- Acceptable staleness for product listings
-- Flash sale timers remain reasonably accurate
+-   Significant load reduction (most requests served from cache)
+-   Acceptable staleness for product listings
+-   Flash sale timers remain reasonably accurate
 
 ---
 
@@ -289,41 +207,92 @@ from typing import Optional, Any, Dict
 from threading import Lock
 
 class SimpleCache:
-	"""Simple in-memory cache with TTL"""
+    """Simple in-memory cache with TTL"""
     
-	def __init__(self, default_ttl: int = 60):
-		self.default_ttl = default_ttl  # seconds
-		self.cache: Dict[str, tuple[Any, datetime]] = {}
-		self.lock = Lock()
+    def __init__(self, default_ttl: int = 60):
+        self.default_ttl = default_ttl  # seconds
+        self.cache: Dict[str, tuple[Any, datetime]] = {}
+        self.lock = Lock()
     
-	def get(self, key: str) -> Optional[Any]:
-		"""Get value if not expired"""
-		with self.lock:
-			if key in self.cache:
-				value, expiry = self.cache[key]
-				if datetime.now() < expiry:
-					return value
-				del self.cache[key]  # Remove expired
-			return None
+    def get(self, key: str) -> Optional[Any]:
+        """Get value if not expired"""
+        with self.lock:
+            if key in self.cache:
+                value, expiry = self.cache[key]
+                if datetime.now() < expiry:
+                    return value
+                del self.cache[key]  # Remove expired
+            return None
     
-	def set(self, key: str, value: Any, ttl: Optional[int] = None):
-		"""Set value with TTL"""
-		with self.lock:
-			ttl = ttl or self.default_ttl
-			expiry = datetime.now() + timedelta(seconds=ttl)
-			self.cache[key] = (value, expiry)
+    def set(self, key: str, value: Any, ttl: Optional[int] = None):
+        """Set value with TTL"""
+        with self.lock:
+            ttl = ttl or self.default_ttl
+            expiry = datetime.now() + timedelta(seconds=ttl)
+            self.cache[key] = (value, expiry)
     
-	def delete(self, key: str):
-		"""Delete specific key"""
-		with self.lock:
-			if key in self.cache:
-				del self.cache[key]
+    def delete(self, key: str):
+        """Delete specific key"""
+        with self.lock:
+            if key in self.cache:
+                del self.cache[key]
     
-	def clear(self):
-		"""Clear all cache entries"""
-		with self.lock:
-			self.cache.clear()
+    def clear(self):
+        """Clear all cache entries"""
+        with self.lock:
+            self.cache.clear()
 ```
+
+### Usage Example
+
+```python
+from src.flash_sales.cache import flash_sale_cache
+
+@app.get("/flash/products")
+def flash_products():
+    # Try cache first
+    cached_products = flash_sale_cache.get("flash_products")
+    if cached_products:
+        return render_template("flash_products.html", products=cached_products)
+    
+    # Cache miss - query database
+    conn = get_conn()
+    manager = FlashSaleManager(conn)
+    products = manager.get_flash_products()
+    
+    # Store in cache for 30 seconds
+    flash_sale_cache.set("flash_products", products, ttl=30)
+    
+    return render_template("flash_products.html", products=products)
+```
+
+---
+
+## Key Design Decisions
+
+### 1. Thread-Safe Implementation
+
+**Why:** Flask applications handle concurrent requests
+**How:** Python's `threading.Lock()` ensures atomic cache operations
+**Benefit:** Prevents race conditions and data corruption
+
+### 2. Automatic Expiration on Read
+
+**Why:** Keeps cache clean without background cleanup process
+**How:** Check expiry time during `get()`, delete if expired
+**Benefit:** No need for scheduled cleanup jobs
+
+### 3. Dictionary Storage
+
+**Why:** Python dictionaries are highly optimized
+**How:** Store `{key: (value, expiry_time)}` tuples
+**Benefit:** O(1) access time, simple implementation
+
+### 4. Configurable TTL
+
+**Why:** Different data may need different freshness requirements
+**How:** Optional `ttl` parameter in `set()` method
+**Benefit:** Flexibility for various use cases
 
 ---
 
@@ -515,4 +484,3 @@ For production deployment:
 **Document Status:** Final  
 **Last Updated:** October 21, 2025  
 **Approved By:** Flash Sales Team
-
