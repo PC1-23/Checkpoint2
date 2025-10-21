@@ -1,4 +1,3 @@
-# Quality Scenarios Catalog — Security
 
 This document collects scenarios for the Security quality attribute for the
 Partner Catalog Ingest feature. All scenarios below are examples of the
@@ -28,10 +27,13 @@ Response, Response-Measure.
 - [ADR 0007 - Modifiability tactics](docs/ADR/0007-modifiability.md) — Adapter pattern, canonical product dict, strict/lenient validation, and defensive SQL.
 - [ADR 0008 - Adapter & Feed Format Evolution (M1)](docs/ADR/0008-modifiability-m1-adapter-format.md) — Conventions and recipe for adding adapters and handling new fields/formats.
 - [ADR 0010 - Contract publication and pre-validation](docs/ADR/0010-contract.md) — Publish a machine-readable contract at `/partner/contract` and provide lightweight validation.
-- [ADR 0010 (superseded) - Integrability](docs/ADR/0010-integrability.md) — Superseded; split into 0010 (contract) and 0011 (versioning).
 - [ADR 0011 - Feed versioning and adapter negotiation](docs/ADR/0011-versioning.md) — Support `X-Feed-Version` and versioned adapters for backward compatibility.
 - [ADR 0012 - Testability](docs/ADR/0012-testability.md) — Helpers for deterministic tests: test DB factory, seeding helpers, and `process_next_job_once`.
 - [ADR 0013 - Usability](docs/ADR/0013-usability.md) — Publish example payloads, a quickstart help endpoint, and normalized JSON error responses.
+- [ADR 0014 - Circuit Breaker Pattern](docs/ADR/0014-circuit-breaker-pattern.md) — Circuit breaker protects external payment services during flash sales.
+- [ADR 0015 - Rate Limiting Strategy](docs/ADR/0015-rate-limiting-strategy.md) — Sliding-window rate limiter for flash checkout and abusive traffic protection.
+- [ADR 0016 - Flash Sale Implementation](docs/ADR/0016-flash-sale-implementation.md) — Data model and manager for flash sale support.
+- [ADR 0017 - Caching Strategy](docs/ADR/0017-caching-strategy.md) — Small in-process cache/tiered approach for hotspot flash products.
 
 # Quality Scenarios Catalog
 
