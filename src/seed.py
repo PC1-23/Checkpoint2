@@ -66,6 +66,25 @@ def seed_products(conn):
     conn.commit()
     print("Products seeded successfully!")
 
+def seed_partner_keys(conn):
+    """Seed a default partner API key for local testing"""
+    # Create a dummy partner if not present
+    cur = conn.execute("SELECT id FROM partner WHERE name = ?", ("Test Partner",))
+    row = cur.fetchone()
+    if row:
+        # row can be sqlite3.Row or tuple
+        partner_id = row[0] if isinstance(row, tuple) else row[0]
+    else:
+        cur2 = conn.execute("INSERT INTO partner (name, format, endpoint) VALUES (?, ?, ?)", ("Test Partner", "json", None))
+        partner_id = cur2.lastrowid
+    # Insert or ignore API key
+    try:
+        conn.execute("INSERT OR IGNORE INTO partner_api_keys (partner_id, api_key, description) VALUES (?, ?, ?)", (partner_id, "test-key", "Seeded test key"))
+        conn.commit()
+        print("Seeded partner API key: test-key")
+    except Exception:
+        conn.rollback()
+
 def main():
     """Main seeding function"""
     db_path = os.environ.get('APP_DB_PATH', 'app.sqlite')

@@ -1,0 +1,7 @@
+ * Serving Flask app 'src.partners.routes'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:5001
+Press CTRL+C to quit
+127.0.0.1 - - [21/Oct/2025 09:48:12] "POST /partner/ingest?async=0 HTTP/1.1" 200 -
+127.0.0.1 - - [21/Oct/2025 09:48:13] "POST /partner/ingest?async=0 HTTP/1.1" 200 -

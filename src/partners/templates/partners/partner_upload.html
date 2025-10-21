@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Partner Catalog Upload</title>
+  </head>
+  <body>
+    <h1>Upload Partner Catalog</h1>
+    <form action="/partner/ingest" method="post" enctype="multipart/form-data">
+      <label for="api_key">API Key</label>
+      <input type="text" name="api_key" id="api_key" placeholder="X-API-Key" />
+      <br/>
+      <label for="file">Feed file (CSV or JSON)</label>
+      <input type="file" name="file" id="file" />
+      <br/>
+      <button type="submit">Upload</button>
+    </form>
+  </body>
+  </html>

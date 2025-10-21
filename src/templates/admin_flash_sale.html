@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+<head><title>Manage Flash Sales</title></head>
+<body>
+    <h1>Manage Flash Sales</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul>
+        {% for category, message in messages %}
+          <li>[{{ category }}] {{ message }}</li>
+        {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    
+    <h2>Current Products</h2>
+    <table border="1">
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Regular Price</th>
+            <th>Flash Sale Active</th>
+            <th>Flash Price</th>
+            <th>Action</th>
+        </tr>
+        {% for p in products %}
+        <tr>
+            <td>{{ p.id }}</td>
+            <td>{{ p.name }}</td>
+            <td>${{ '%.2f' % (p.price_cents / 100.0) }}</td>
+            <td>{{ 'Yes' if p.flash_sale_active else 'No' }}</td>
+            <td>${{ '%.2f' % (p.flash_sale_price_cents / 100.0) if p.flash_sale_price_cents else 'N/A' }}</td>
+            <td>
+                <form method="post" action="/admin/flash-sale/set" style="display: inline;">
+                    <input type="hidden" name="product_id" value="{{ p.id }}">
+                    <input type="number" name="flash_price" placeholder="Flash $" step="0.01" style="width: 80px;">
+                    <button type="submit">Set Flash Sale</button>
+                </form>
+                {% if p.flash_sale_active %}
+                <form method="post" action="/admin/flash-sale/remove" style="display: inline;">
+                    <input type="hidden" name="product_id" value="{{ p.id }}">
+                    <button type="submit">Remove</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+    <p><a href="/products">Back to Products</a></p>
+</body>
+</html>

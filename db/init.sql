@@ -16,12 +16,75 @@ CREATE TABLE IF NOT EXISTS product (
 	name TEXT NOT NULL UNIQUE,
     price_cents INTEGER NOT NULL CHECK(price_cents >= 0),
     stock INTEGER NOT NULL CHECK(stock >= 0),
-    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1))
+    active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
+    -- NEW: Flash sale columns
+    flash_sale_active INTEGER DEFAULT 0,
+    flash_sale_price_cents INTEGER
 );
 
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_product_active ON product(active);
 CREATE INDEX IF NOT EXISTS idx_product_name ON product(name);
+
+
+-- =============================
+-- Partner integration tables
+-- =============================
+
+CREATE TABLE IF NOT EXISTS partner (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	name TEXT NOT NULL,
+	format TEXT NOT NULL,
+	endpoint TEXT,
+	endpoint_auth TEXT, -- JSON blob describing auth: {"type":"basic","username":"u","password":"p"} or {"type":"bearer","token":"..."}
+	endpoint_headers TEXT -- JSON blob of additional headers to send when fetching partner feed
+);
+
+CREATE TABLE IF NOT EXISTS partner_api_keys (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	partner_id INTEGER NOT NULL,
+	api_key TEXT NOT NULL UNIQUE,
+	description TEXT,
+	FOREIGN KEY (partner_id) REFERENCES partner(id)
+);
+
+-- Track processed partner feed checksums to avoid re-processing the same feed
+CREATE TABLE IF NOT EXISTS partner_feed_imports (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	partner_id INTEGER NOT NULL,
+	feed_hash TEXT NOT NULL,
+	inserted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(partner_id, feed_hash),
+	FOREIGN KEY (partner_id) REFERENCES partner(id)
+);
+
+-- Durable jobs table for partner ingest (simple persistent queue)
+CREATE TABLE IF NOT EXISTS partner_ingest_jobs (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	partner_id INTEGER NOT NULL,
+	payload TEXT NOT NULL, -- JSON payload of products
+	feed_hash TEXT,
+	status TEXT NOT NULL DEFAULT 'pending', -- pending, in_progress, done, failed
+	attempts INTEGER NOT NULL DEFAULT 0,
+	next_run TIMESTAMP,
+	max_attempts INTEGER NOT NULL DEFAULT 5,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	processed_at TIMESTAMP,
+	error TEXT
+);
+
+
+-- Scheduled partner ingestion configuration
+CREATE TABLE IF NOT EXISTS partner_schedules (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	partner_id INTEGER NOT NULL,
+	schedule_type TEXT NOT NULL, -- 'interval' or 'cron'
+	schedule_value TEXT NOT NULL, -- JSON encoded schedule details (seconds for interval or cron expr)
+	enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+	last_run TIMESTAMP,
+	FOREIGN KEY (partner_id) REFERENCES partner(id)
+);
+
 
 
 -- =============================
