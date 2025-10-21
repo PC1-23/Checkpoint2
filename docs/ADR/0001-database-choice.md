@@ -2,6 +2,8 @@
 
 **Status:** Accepted
 
+**Quality attribute(s):** Reliability, Portability, Simplicity
+
 ## Context
 We needed a persistent data store for users, products, sales, and payments. The requirements included relational data (users make sales, sales have items, products are referenced, payments are linked to sales), atomic transactions (for checkout), and easy local development.
 

@@ -112,7 +112,7 @@ def upsert_products(conn: sqlite3.Connection, products: List[Dict], partner_id: 
     return upserted, errors
 
 
-def validate_products(products: List[Dict]) -> Tuple[List[Dict], List[str]]:
+def validate_products(products: List[Dict], strict: bool = False) -> Tuple[List[Dict], List[str]]:
     """Validate normalized product dicts. Returns (valid_items, errors).
 
     Simple rules:
@@ -145,6 +145,13 @@ def validate_products(products: List[Dict]) -> Tuple[List[Dict], List[str]]:
             if stock < 0:
                 raise ValueError("stock must be >= 0")
             sku = (p.get("sku") or "").strip()
+            # strict mode: enforce max lengths and character rules
+            if strict:
+                if len(name) > 256:
+                    raise ValueError("name too long")
+                if sku and len(sku) > 128:
+                    raise ValueError("sku too long")
+
             valid.append({
                 "sku": sku,
                 "name": name,

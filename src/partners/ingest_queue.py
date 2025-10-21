@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional, Tuple
 import sqlite3
 from .partner_ingest_service import upsert_products, validate_products
 from .metrics import incr
+from .security import record_audit
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def _claim_job(conn: sqlite3.Connection) -> Optional[Tuple[int, int, list, int, 
     return jid, partner_id, json.loads(payload), attempts or 0, max_attempts or 5
 
 
-def worker_loop(db_path: str, poll_interval: float = 0.5):
+def worker_loop(db_path: str, poll_interval: float = 0.1):
     while True:
         if _stop_event and _stop_event.is_set():
             break
@@ -86,6 +87,7 @@ def worker_loop(db_path: str, poll_interval: float = 0.5):
                     cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP WHERE id = ?", (jid,))
                     conn.commit()
                     incr("processed")
+                    record_audit(partner_id, None, "worker_processed_empty", payload=str(jid))
                 else:
                     valid, errors = validate_products(products)
                     if valid:
@@ -95,11 +97,13 @@ def worker_loop(db_path: str, poll_interval: float = 0.5):
                         cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP WHERE id = ?", (jid,))
                         conn.commit()
                         incr("processed")
+                        record_audit(partner_id, None, "worker_processed", payload=str(jid))
                     else:
                         logger.warning("Ingest validation failed for job=%s partner=%s errors=%s", jid, partner_id, errors)
                         cur = conn.cursor()
                         cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ? WHERE id = ?", (json.dumps(errors), jid))
                         conn.commit()
+                        record_audit(partner_id, None, "worker_validation_failed", payload=json.dumps(errors))
             except Exception as e:
                 logger.exception("Ingest worker error for job %s: %s", jid, e)
                 cur = conn.cursor()
@@ -121,6 +125,7 @@ def worker_loop(db_path: str, poll_interval: float = 0.5):
                 else:
                     cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ? WHERE id = ?", (str(e), jid))
                 incr("failed")
+                record_audit(partner_id, None, "worker_exception", payload=str(e))
                 conn.commit()
             finally:
                 conn.close()
@@ -143,4 +148,48 @@ def stop_worker():
     global _stop_event
     if _stop_event:
         _stop_event.set()
+
+
+def process_next_job_once(db_path: str) -> Optional[Dict[str, Any]]:
+    """Claim and process a single pending job synchronously.
+
+    Returns a dict with job_id and final status, or None if no pending job
+    was available.
+    """
+    conn = sqlite3.connect(db_path)
+    try:
+        claimed = _claim_job(conn)
+        if not claimed:
+            return None
+        jid, partner_id, products, attempts, max_attempts = claimed
+        try:
+            if not products:
+                cur = conn.cursor()
+                cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP WHERE id = ?", (jid,))
+                conn.commit()
+                record_audit(partner_id, None, "worker_processed_empty", payload=str(jid))
+                return {"job_id": jid, "status": "done"}
+
+            valid, errors = validate_products(products)
+            if valid:
+                upserted, upsert_errors = upsert_products(conn, valid, partner_id=partner_id)
+                cur = conn.cursor()
+                cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP WHERE id = ?", (jid,))
+                conn.commit()
+                record_audit(partner_id, None, "worker_processed", payload=str(jid))
+                return {"job_id": jid, "status": "done", "upserted": upserted}
+            else:
+                cur = conn.cursor()
+                cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ? WHERE id = ?", (json.dumps(errors), jid))
+                conn.commit()
+                record_audit(partner_id, None, "worker_validation_failed", payload=json.dumps(errors))
+                return {"job_id": jid, "status": "failed", "errors": errors}
+        except Exception as e:
+            cur = conn.cursor()
+            cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ? WHERE id = ?", (str(e), jid))
+            conn.commit()
+            record_audit(partner_id, None, "worker_exception", payload=str(e))
+            return {"job_id": jid, "status": "failed", "error": str(e)}
+    finally:
+        conn.close()
 

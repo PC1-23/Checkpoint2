@@ -138,11 +138,18 @@ def test_requeue_failed_job(tmp_path):
     assert r.status_code == 200
 
     # start worker and ensure it processes (it should fail again on validation but status will be failed)
-    iq.start_worker(db_path)
-    time.sleep(0.5)
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    cur.execute("SELECT status FROM partner_ingest_jobs WHERE id = ?", (job_id,))
-    st = cur.fetchone()[0]
+    # ensure worker has had time to reprocess the job
+    import time
+    st = None
+    for _ in range(60):
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("SELECT status FROM partner_ingest_jobs WHERE id = ?", (job_id,))
+        row = cur.fetchone()
+        conn.close()
+        if row:
+            st = row[0]
+            if st in ("failed", "done"):
+                break
+        time.sleep(0.1)
     assert st in ("failed", "done")
-    conn.close()

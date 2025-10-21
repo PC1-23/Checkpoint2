@@ -74,6 +74,17 @@ CREATE TABLE IF NOT EXISTS partner_ingest_jobs (
 );
 
 
+-- Audit trail for partner operations (security / compliance)
+CREATE TABLE IF NOT EXISTS partner_ingest_audit (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	partner_id INTEGER,
+	api_key TEXT,
+	action TEXT NOT NULL,
+	payload TEXT,
+	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
 -- Scheduled partner ingestion configuration
 CREATE TABLE IF NOT EXISTS partner_schedules (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
