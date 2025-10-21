@@ -2,6 +2,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Security, Access Control, Maintainability
+
 Context
 -------
 Admin endpoints control scheduling, job requeueing and metrics. Access must

@@ -3,6 +3,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Testability, Reliability, Developer Productivity
+
 Context
 -------
 Reliable automated tests are essential for the Partner Catalog Ingest

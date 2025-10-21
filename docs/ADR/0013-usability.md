@@ -3,6 +3,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Usability, Integrability, Supportability
+
 Context
 -------
 Partners and internal engineers need clear, discoverable guidance to use the

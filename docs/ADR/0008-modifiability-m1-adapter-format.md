@@ -3,6 +3,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Modifiability, Interoperability, Testability
+
 Context
 -------
 Partners will occasionally change feed formats or add new fields to their

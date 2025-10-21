@@ -2,6 +2,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Security, Reliability, Availability
+
 Context
 -------
 The partner ingest endpoints are publicly exposed and accept API keys that

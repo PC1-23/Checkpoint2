@@ -3,6 +3,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Modifiability, Extensibility, Testability
+
 Context
 -------
 The Partner Catalog Ingest feature will evolve: partners will add fields,

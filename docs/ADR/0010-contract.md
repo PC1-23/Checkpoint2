@@ -3,6 +3,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Integrability, Usability, Testability
+
 Context
 -------
 Partners need a stable, machine-readable contract to validate product

@@ -3,6 +3,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Modifiability, Evolvability, Interoperability
+
 Context
 -------
 The platform will evolve the feed contract over time. We need a way to

@@ -2,6 +2,8 @@
 
 **Status:** Accepted
 
+**Quality attribute(s):** Modifiability, Testability, Maintainability, Performance
+
 ## Context
 We needed a way to access and manipulate persistent data (users, products, sales, payments) from our Flask application. The team is split: Partner A owns product/user, Partner B owns sales/checkout. We wanted clear boundaries and testability.
 

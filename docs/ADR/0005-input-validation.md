@@ -2,6 +2,8 @@
 
 Status: Accepted
 
+Quality attribute(s): Security, Data Integrity, Reliability, Usability
+
 Context
 -------
 Partner feeds can contain malformed or malicious data. Input validation is
