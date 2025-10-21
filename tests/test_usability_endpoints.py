@@ -2,17 +2,12 @@ import json
 from src.partners.routes import app
 
 
-def test_contract_info_and_example():
+def test_help_endpoint():
     c = app.test_client()
-    rv = c.get('/partner/contract/info')
+    rv = c.get('/partner/help')
     assert rv.status_code == 200
     info = rv.get_json()
-    assert 'contract_version' in info
-
-    rv2 = c.get('/partner/contract/example')
-    assert rv2.status_code == 200
-    ex = rv2.get_json()
-    assert ex.get('sku') is not None
+    assert 'post_example' in info
 
 
 def test_help_and_error_format():
