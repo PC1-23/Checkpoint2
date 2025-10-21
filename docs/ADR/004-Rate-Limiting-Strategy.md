@@ -18,6 +18,55 @@ Flash sales create sudden traffic spikes that can overwhelm our system. During p
 - Bots may attempt to purchase all inventory instantly
 
 Without traffic control, these spikes can:
+```
+# NOTE: Superseded
+
+This ADR was superseded by `ADR-0015` (Rate Limiting Strategy).
+
+Please see `docs/ADR/0015-rate-limiting-strategy.md` for the canonical,
+persistently-numbered ADR content.
+
+---
+
+Status: Superseded
+
+Superseded-by: ADR-0015
+
+Date superseded: 2025-10-21
+
+Rationale: Consolidated ADR numbering and canonical location
+
+---
+
+For historical context, the original content has been preserved in
+repository history. The canonical active ADR is:
+
+- `docs/ADR/0015-rate-limiting-strategy.md`
+
+```
+
+# --- Original ADR (archived below) ---
+
+# ADR-004: Rate Limiting Strategy for Flash Sale Protection
+
+**Status:** Accepted
+
+**Date:** 2025-10-21
+
+**Decision Makers:** Flash Sales Team
+
+---
+
+## Context
+
+Flash sales create sudden traffic spikes that 
+can overwhelm our system. During peak moments:
+- Thousands of users access product listings simultaneously
+- Hundreds attempt checkout concurrently
+- Malicious actors may attempt to overwhelm the system (DoS attacks)
+- Bots may attempt to purchase all inventory instantly
+
+Without traffic control, these spikes can:
 - Degrade response times for all users
 - Cause database connection exhaustion
 - Crash the application server
@@ -142,6 +191,90 @@ No additional database lookups
 - More sophisticated protection
 - Handles DDoS at network level
 - Additional cost
+- External dependency
+- Overkill for current project scope
+- **Production consideration** for real deployment
+
+### 4. Database-Based Rate Limiting
+- Persistent across app restarts
+- Can share across multiple instances
+- Adds database load (defeats purpose)
+- Higher latency
+- More complex
+
+---
+
+## Consequences
+
+### Positive
+
+**System Stability:** Prevents resource exhaustion during flash sales
+
+**Predictable Performance:** Response times remain consistent under load
+
+**Fair Access:** Legitimate users have equal opportunity to purchase
+
+**DoS Protection:** Basic defense against traffic-based attacks
+
+**Clear User Feedback:** Users understand why they're rate-limited
+
+**Simple Implementation:** Easy to understand, test, and maintain
+
+**No External Dependencies:** Self-contained solution
+
+### Negative
+
+⚠️ **Shared IP Impact:** Corporate networks or NAT may affect multiple users
+- *Mitigation:* Generous limits (5 per minute) accommodate shared IPs
+
+⚠️ **Memory Usage:** Stores timestamps for each IP
+- *Mitigation:* Automatic cleanup of expired entries
+
+⚠️ **Not Distributed:** Single-instance tracking (doesn't work across multiple servers)
+- *Mitigation:* Acceptable for current monolithic deployment
+- *Future:* Redis-backed rate limiting for distributed systems
+
+⚠️ **Sophisticated Bypass:** IP rotation can evade rate limits
+- *Mitigation:* Additional security layers (CAPTCHA, account verification) for production
+
+### Neutral
+
+🔹 **Configuration Required:** Limits must be tuned based on actual traffic patterns
+
+🔹 **Monitoring Needed:** Must track rate limit hits to detect attacks
+
+---
+
+## Implementation Details
+
+```python
+class RateLimiter:
+    def __init__(self, max_requests: int = 10, window_seconds: int = 60):
+        self.max_requests = max_requests
+        self.window_seconds = window_seconds
+        self.requests = defaultdict(list)  # ip -> [timestamps]
+        self.lock = Lock()  # Thread safety
+    
+    def is_allowed(self, identifier: str) -> bool:
+        """Check if request is allowed"""
+        with self.lock:
+            now = datetime.now()
+            cutoff = now - timedelta(seconds=self.window_seconds)
+            
+            # Remove old timestamps
+            self.requests[identifier] = [
+                req_time for req_time in self.requests[identifier]
+                if req_time > cutoff
+            ]
+            
+            # Check limit
+            if len(self.requests[identifier]) >= self.max_requests:
+                return False
+            
+            # Record request
+            self.requests[identifier].append(now)
+            return True
+```
 - External dependency
 - Overkill for current project scope
 - **Production consideration** for real deployment
