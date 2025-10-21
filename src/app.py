@@ -13,6 +13,8 @@ import sqlite3
 from .dao import SalesRepo, ProductRepo, get_connection
 from .payment import process as payment_process
 from .main import init_db
+from .adapters.registry import get_adapter
+from .partners.partner_ingest_service import validate_products, upsert_products
 
 
 def create_app() -> Flask:
@@ -229,6 +231,52 @@ def create_app() -> Flask:
         session.pop("cart", None)
         flash(f"Checkout success. Sale #{sale_id}", "success")
         return redirect(url_for("receipt", sale_id=sale_id))
+    
+    @app.post('/partner/ingest')
+    def partner_ingest_main():
+        api_key = request.headers.get('X-API-Key') or request.form.get('api_key')
+        if not api_key:
+            return ("Missing API key", 401)
+
+        # validate key against DB
+        conn_check = get_conn()
+        try:
+            cur = conn_check.execute('SELECT partner_id FROM partner_api_keys WHERE api_key = ?', (api_key,))
+            row = cur.fetchone()
+            if not row:
+                return ("Invalid API key", 401)
+        finally:
+            conn_check.close()
+
+        content_type = request.content_type or ''
+        payload = request.get_data()
+        adapter = get_adapter(content_type)
+        if not adapter:
+            if content_type.startswith('application/json'):
+                adapter = get_adapter('application/json')
+            elif content_type.startswith('text/csv') or content_type == 'text/plain':
+                adapter = get_adapter('text/csv')
+        if not adapter:
+            return ('No adapter for content type', 415)
+
+        try:
+            products = adapter(payload, content_type)
+        except Exception as e:
+            return (f'Adapter parse error: {e}', 400)
+
+        valid_items, validation_errors = validate_products(products)
+        ingested = 0
+        errors = validation_errors[:]
+        if valid_items:
+            conn = get_conn()
+            try:
+                upserted, upsert_errors = upsert_products(conn, valid_items)
+                ingested = upserted
+                errors.extend(upsert_errors)
+            finally:
+                conn.close()
+
+        return ({'ingested': ingested, 'errors': errors}, 200)
     @app.post("/cart/remove")
     def cart_remove():
         pid = request.form.get("product_id")
