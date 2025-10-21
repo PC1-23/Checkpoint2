@@ -19,6 +19,9 @@ def create_app() -> Flask:
     app = Flask(__name__, template_folder="templates")
     app.secret_key = os.environ.get("APP_SECRET_KEY", "dev-insecure-secret")
 
+    from .flash_sales.routes import flash_bp
+    app.register_blueprint(flash_bp)
+
     root = Path(__file__).resolve().parents[1]
     db_path = os.environ.get("APP_DB_PATH", str(root / "app.sqlite"))
     init_db(db_path)

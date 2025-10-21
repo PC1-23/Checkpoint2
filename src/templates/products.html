@@ -1,6 +1,29 @@
 <!doctype html>
 <html>
-  <head><title>Products</title></head>
+  <head>
+    <title>Products</title>
+    <style>
+      .flash-badge {
+        background-color: #ff0000;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-weight: bold;
+        font-size: 12px;
+        margin-left: 10px;
+      }
+      .original-price {
+        text-decoration: line-through;
+        color: #999;
+        margin-right: 8px;
+      }
+      .flash-price {
+        color: #ff0000;
+        font-weight: bold;
+        font-size: 1.1em;
+      }
+    </style>
+  </head>
   <body>
     <h1>Products</h1>
     <form method="get" action="/products" style="margin: 10px 0;">
@@ -20,6 +43,7 @@
         </ul>
       {% endif %}
     {% endwith %}
+    
     <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #ccc;">
       <h3>Add Product by ID</h3>
       <form method="post" action="/cart/add" style="display: flex; gap: 10px; align-items: center;">
@@ -31,15 +55,27 @@
           
           <button type="submit">Add to Cart</button>
       </form>
-  </div>
+    </div>
 
-  <table border="1">
+    <table border="1">
       <tr><th>ID</th><th>Name</th><th>Price</th><th>Stock</th><th>Action</th></tr>
       {% for p in products %}
         <tr>
           <td>{{ p.id }}</td>
-          <td>{{ p.name }}</td>
-          <td>{{ '%.2f' % (p.price_cents / 100.0) }}</td>
+          <td>
+            {{ p.name }}
+            {% if p.is_flash_sale %}
+              <span class="flash-badge">⚡ FLASH SALE</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if p.is_flash_sale %}
+              <span class="original-price">${{ '%.2f' % (p.original_price / 100.0) }}</span>
+              <span class="flash-price">${{ '%.2f' % (p.price_cents / 100.0) }}</span>
+            {% else %}
+              ${{ '%.2f' % (p.price_cents / 100.0) }}
+            {% endif %}
+          </td>
           <td>{{ p.stock }}</td>
           <td>
             <form method="post" action="/cart/add">
@@ -53,4 +89,4 @@
     </table>
     <p><a href="/cart">View Cart</a></p>
   </body>
-  </html>
+</html>
