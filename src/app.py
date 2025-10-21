@@ -219,11 +219,20 @@ def create_app() -> Flask:
         conn = get_conn()
         repo = get_repo(conn)
         try:
+            # Use the resilient payment path (retry + circuit breaker)
+            # Import lazily to avoid circular import issues
+            try:
+                from .flash_sales.payment_resilience import process_payment_resilient
+                payment_cb = process_payment_resilient
+            except Exception:
+                # Fallback to the simple payment processor if resilience module unavailable
+                payment_cb = payment_process
+
             sale_id = repo.checkout_transaction(
                 user_id=user_id,
                 cart=cart_list,
                 pay_method=pay_method,
-                payment_cb=payment_process,
+                payment_cb=payment_cb,
             )
         except Exception as e:
             flash(str(e), "error")
