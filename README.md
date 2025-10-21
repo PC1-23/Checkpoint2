@@ -55,6 +55,30 @@ Quick start (macOS / Linux)
 Notes
 - This is a demo implementation intended for local development and testing.
 - For production, replace the SQLite-backed queue with a proper durable queue (Redis/RabbitMQ/Cloud Tasks) and replace the simple metrics with Prometheus.
+#
+# Schema notes
+
+This repository contains two schema files under `db/`:
+
+- `db/init.sql` - canonical, full application schema used by the app. It contains the
+   product catalog tables, partner integration tables, durable job table
+   (`partner_ingest_jobs`), idempotency table (`partner_feed_imports`), and
+   scheduling table (`partner_schedules`). Use this file to initialize or
+   migrate the application database.
+
+- `db/partners.sql` - a lightweight, compatibility-focused subset that documents
+   the basic `partner` and `partner_api_keys` tables. This file is intentionally
+   minimal and may lag behind `db/init.sql`. Prefer `db/init.sql` for any
+   authoritative operations (initialization, migrations, seeding).
+
+To initialize the database with the full schema (recommended):
+
+```bash
+sqlite3 app.sqlite < db/init.sql
+# or run the app initialization helper
+python -m src.main
+```
+
 # CheckPoint1
 
 ## Project description

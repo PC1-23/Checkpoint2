@@ -5,7 +5,7 @@ from .partner_adapters import parse_json_feed, parse_csv_feed
 from .partner_ingest_service import upsert_products
 from .ingest_queue import enqueue_feed, start_worker
 from .metrics import get_metrics
-from . import scheduler
+from .security import check_rate_limit, record_audit
 import sqlite3, os
 
 app = Flask(__name__, template_folder=Path(__file__).parent.joinpath("templates"))
@@ -30,11 +30,6 @@ try:
     root = Path(__file__).resolve().parents[2]
     db_path = str(Path(os.environ.get("APP_DB_PATH") or root / "app.sqlite"))
     start_worker(db_path)
-    try:
-        scheduler.start_scheduler()
-    except Exception:
-        # scheduler is optional / may log its own message if APScheduler missing
-        pass
 except Exception:
     # If anything goes wrong starting background services during import, don't
     # crash the app import (tests will still run). The worker/scheduler can be
@@ -49,14 +44,16 @@ def partner_ingest():
         abort(401, "Missing API key")
 
     # Validate API key against partner_api_keys table
-    conn_check = get_conn()
-    try:
-        cur = conn_check.execute("SELECT partner_id FROM partner_api_keys WHERE api_key = ?", (api_key,))
-        row = cur.fetchone()
-        if not row:
-            abort(401, "Invalid API key")
-    finally:
-        conn_check.close()
+    from .security import verify_api_key
+    partner_id_lookup = verify_api_key(os.environ.get("APP_DB_PATH"), api_key)
+    if partner_id_lookup is None:
+        record_audit(None, api_key, "auth_invalid")
+        abort(401, "Invalid API key")
+
+    # Rate limit check (best-effort)
+    if not check_rate_limit(api_key):
+        record_audit(None, api_key, "rate_limited")
+        abort(429, "Rate limit exceeded")
 
     # Choose adapter by content type or file extension
     content_type = request.content_type or ""
@@ -75,6 +72,9 @@ def partner_ingest():
     except Exception:
         # fallback: hash json dump of parsed products
         feed_hash = hashlib.sha256(json.dumps(products, sort_keys=True).encode()).hexdigest()
+
+    # Feed version header (optional) — can be used by adapters later
+    feed_version = request.headers.get("X-Feed-Version") or request.args.get("feed_version")
 
     # If async parameter provided, enqueue and return 202
     async_mode = request.args.get("async", "1")
@@ -99,6 +99,7 @@ def partner_ingest():
         except TypeError:
             # backward compatibility with test doubles or older wrappers that don't accept feed_hash
             enqueue_feed(partner_id or 0, products + [])
+        record_audit(partner_id, api_key, "enqueue", payload=str(feed_hash))
         # store feed_hash alongside enqueue metadata if needed (in-process queue currently doesn't persist)
         return ("Accepted", 202)
 
@@ -108,8 +109,45 @@ def partner_ingest():
         count, upsert_errors = upsert_products(conn, products, partner_id=partner_id, feed_hash=feed_hash)
     finally:
         conn.close()
+    record_audit(partner_id, api_key, "ingest_sync", payload=str(feed_hash))
+    # No contract pre-validation in moderate prune; rely on server-side validation
 
     return (f"Ingested {count} products", 200)
+# Contract endpoints removed in moderate prune
+
+
+@app.get('/partner/help')
+def partner_help():
+    """Human-friendly quickstart for partners (small page with sample curl)."""
+    # Keep this small and machine-readable (JSON) for discoverability
+    quickstart = {
+        "description": "Quickstart examples for Partner Ingest API",
+        "post_example": {
+            "curl": "curl -X POST http://HOST/partner/ingest -H 'Content-Type: application/json' -H 'X-API-Key: <your-key>' --data '[{\"sku\": \"sku-example-123\", \"name\": \"Sample Product\", \"price_cents\": 1999, \"stock\": 10}]'"
+        },
+        "notes": ["Use X-Feed-Version header to select adapter versions when supported."]
+    }
+    return jsonify(quickstart)
+
+
+# JSON error handler: return consistent JSON with {error, details}
+@app.errorhandler(400)
+@app.errorhandler(401)
+@app.errorhandler(403)
+@app.errorhandler(404)
+@app.errorhandler(429)
+@app.errorhandler(500)
+def json_error_handler(err):
+    try:
+        code = getattr(err, 'code', 500)
+        name = getattr(err, 'name', 'Error')
+        description = getattr(err, 'description', str(err))
+    except Exception:
+        code = 500
+        name = 'Error'
+        description = str(err)
+    payload = {"error": name, "details": description}
+    return jsonify(payload), code
 @app.post('/partner/schedule')
 def partner_schedule():
     """Trigger scheduled ingestion for a partner. For demo, this simply returns 200.
@@ -133,6 +171,8 @@ def list_schedules():
         return jsonify(rows)
     finally:
         conn.close()
+    # record admin access
+    record_audit(None, admin_key, "admin_list_schedules")
 
 
 @app.post('/partner/schedules')
@@ -161,6 +201,7 @@ def create_schedule():
         return ("Created", 201)
     finally:
         conn.close()
+    record_audit(None, admin_key, "admin_create_schedule", payload=str(data))
 
 
 @app.delete('/partner/schedules/<int:sid>')
@@ -176,6 +217,7 @@ def delete_schedule(sid: int):
         return ("Deleted", 200)
     finally:
         conn.close()
+    record_audit(None, admin_key, "admin_delete_schedule", payload=str(sid))
 
 
 @app.get('/partner/jobs')

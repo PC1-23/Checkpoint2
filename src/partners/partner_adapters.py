@@ -62,3 +62,6 @@ def parse_csv_feed(payload: bytes) -> List[Dict]:
             "extra": row,
         })
     return out
+
+
+# XML adapter removed in moderate prune; keep JSON and CSV only
