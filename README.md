@@ -105,35 +105,139 @@ Open http://127.0.0.1:5000 in your browser.
 
 3) Run tests
 ```bash
-pytest -q
+```markdown
+# Partner (VAR) Catalog Ingest — Demo & Developer Guide
+
+This repository is a demo implementation of a partner catalog ingest flow
+designed for local development, demos, and experimentation. It includes
+validation, a small admin UI, a background worker, and observability hooks.
+
+What’s new / important to know
+- Admin UI uses a session-based model: POST /partner/admin/login sets a session cookie.
+   Admin actions in the browser require that session (UI buttons are disabled until
+   the session is confirmed). Programmatic automation should use a separate token
+   flow or the `ADMIN_API_KEY` environment variable if needed for scripts.
+- Observability: the app exposes Prometheus-style metrics (protected) and uses
+   structured JSON logging for easier ingestion.
+- Optional API-key hashing: set `HASH_KEYS=true` to store hashed partner keys.
+
+Repository layout (important files)
+- `src/` — application code (Flask app, partners, observability)
+- `src/partners/routes.py` — partner endpoints, admin UI, onboarding
+- `src/observability.py` — Prometheus metrics helpers and JSON logging
+- `db/init.sql` — full DB schema
+- `tests/` — unit and integration tests (use pytest)
+
+Quick start (dev)
+
+1) Setup a virtualenv and install dependencies
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Database setup instructions
+2) Initialize the database (idempotent)
 
-The app uses a SQLite file (default path: <repo>/app.sqlite).
-
-1) Initialize schema (idempotent)
 ```bash
+# create schema
 python -m src.main
-```
 
-2) Seed demo data (users + products)
-```bash
+# optional: seed demo data (users + products)
 python -m src.seed
 ```
 
-Options
-- You can override the DB location by setting APP_DB_PATH, e.g.:
-	```bash
-	APP_DB_PATH=$(pwd)/app.sqlite python -m src.main
-	APP_DB_PATH=$(pwd)/app.sqlite python -m src.seed
-	```
-- Seeded users for quick login:
-	- john / password123
-	- jane / password123
-	- alice / password123
+3) Start the Flask app (single-process dev)
 
-## Team members
+```bash
+# default: 127.0.0.1:5000
+python -m src.app
 
+# or with overridden env vars
+APP_DB_PATH=$(pwd)/app.sqlite ADMIN_API_KEY=admin-demo-key APP_SECRET_KEY=dev-insecure-secret python -m src.app
+```
+
+4) Start the background worker in a second terminal
+
+```bash
+APP_DB_PATH=$(pwd)/app.sqlite python -c "import sys, pathlib; sys.path.insert(0, str(pathlib.Path('.').resolve())); from src.partners.ingest_queue import start_worker; from pathlib import Path; start_worker(str(Path('.').resolve()/ 'app.sqlite'))"
+```
+
+Important environment variables
+- `APP_DB_PATH` — path to SQLite DB file (default: `app.sqlite` in repo)
+- `ADMIN_API_KEY` — demo admin key (default: `admin-demo-key`)
+- `APP_SECRET_KEY` — Flask session secret (set to a strong value in non-dev)
+- `HASH_KEYS` — set to `true` to hash API keys before storing (default: `false`)
+
+Key endpoints and UX notes
+- `GET /partner/contract` — machine-readable contract (JSON)
+- `GET /partner/contract/example` — example payload a partner can copy (JSON)
+- `GET /partner/help` — quickstart and copyable curl examples (JSON)
+- `POST /partner/ingest` — ingest endpoint (requires `X-API-Key` for partner auth)
+- `GET /partner/admin` — admin UI; buttons disabled until session is confirmed
+- `POST /partner/admin/login` — login (JSON or form); sets admin session cookie
+- `POST /partner/onboard_form` — admin UI helper to onboard partner and return API key
+- `GET /partner/jobs` — admin-only JSON jobs listing
+- `GET /partner/metrics` — admin-only metrics dashboard (reads Prometheus registry)
+- `GET /partner/audit` — admin-only audit viewer
+
+Error responses
+- API errors are normalized to JSON: `{ "error": "<Name>", "details": "<message>" }`.
+   This makes it simple for partner automation to parse and react to failures.
+
+Demo commands (copy/paste)
+
+1) Contract & example (pretty-print with `jq`)
+
+```bash
+curl -sS http://127.0.0.1:5000/partner/contract | jq .
+curl -sS http://127.0.0.1:5000/partner/contract/example | jq .
+```
+
+2) Quickstart/help
+
+```bash
+curl -sS http://127.0.0.1:5000/partner/help | jq .
+```
+
+3) Show JSON error for missing API key
+
+```bash
+curl -i -sS -X POST http://127.0.0.1:5000/partner/ingest -H 'Content-Type: application/json' -d '[]'
+```
+
+4) Admin login + onboard (session-based)
+
+```bash
+# login and save cookie
+curl -i -c cookies.txt -H "Content-Type: application/json" \
+   -d '{"admin_key":"admin-demo-key"}' -X POST http://127.0.0.1:5000/partner/admin/login
+
+# create partner using session cookie (returns the API key)
+curl -i -b cookies.txt -H "Content-Type: application/json" \
+   -d '{"name":"DemoPartner","description":"Demo","format":"json"}' \
+   -X POST http://127.0.0.1:5000/partner/onboard_form
+```
+
+Running tests
+
+```bash
+pytest -q
+```
+
+Notes and security guidance
+- The demo `ADMIN_API_KEY` is `admin-demo-key` unless you override it. Do not commit real secrets.
+- In production:
+   - Use a secure `APP_SECRET_KEY` and rotate admin keys.
+   - Replace SQLite + in-process worker with a durable queue (Redis, RabbitMQ, Cloud Tasks).
+   - Harden cookies (SameSite, Secure) and add CSRF protections for forms.
+
+Further reading
+- ADR: `docs/ADR/0013-usability.md` — describes contract, example, quickstart and normalized errors.
+
+Maintainers
 - Pragya Chapagain
 - Yanlin Wu
+
+```
