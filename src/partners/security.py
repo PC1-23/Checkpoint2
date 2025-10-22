@@ -9,6 +9,7 @@ import os
 # Simple in-memory rate limiter per API key (token bucket-like)
 _limits: dict = {}
 _lock = threading.Lock()
+_inflight: set = set()
 
 
 def _get_db_path() -> str:
@@ -28,6 +29,29 @@ def check_rate_limit(api_key: str, max_per_minute: int = 60) -> bool:
             _limits[api_key] = (entry[0], entry[1] + 1)
             return True
         return False
+
+
+def try_acquire_inflight(api_key: str) -> bool:
+    """Attempt to reserve an inflight slot for this API key.
+
+    Returns True if the slot was acquired, False if another request is
+    already in progress for the same key. This is a lightweight in-process
+    guard intended for demos to avoid concurrent writes to SQLite.
+    """
+    with _lock:
+        if api_key in _inflight:
+            return False
+        _inflight.add(api_key)
+        return True
+
+
+def release_inflight(api_key: str) -> None:
+    """Release a previously-acquired inflight slot for the API key."""
+    with _lock:
+        try:
+            _inflight.remove(api_key)
+        except KeyError:
+            pass
 
 
 def record_audit(partner_id: Optional[int], api_key: Optional[str], action: str, payload: Optional[str] = None):

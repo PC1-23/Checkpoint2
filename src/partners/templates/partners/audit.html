@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Partner Audit</title>
+    <style>
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #ddd; padding: 8px; }
+      th { background: #f4f4f4; }
+      .small { font-size: 0.9em; color: #666; }
+      form { margin-bottom: 1em; }
+    </style>
+  </head>
+  <body>
+    <h1>Partner Audit</h1>
+    <form method="get">
+      <label>Action: <input type="text" name="action" value="{{ action_filter or '' }}"></label>
+      <label>API key prefix: <input type="text" name="api_key_prefix" value="{{ api_key_prefix or '' }}"></label>
+      <label>Limit: <input type="number" name="limit" value="100" min="1" max="1000"></label>
+      <button type="submit">Filter</button>
+    </form>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Partner ID</th>
+          <th>API Key (prefix)</th>
+          <th>Action</th>
+          <th>Payload</th>
+          <th>Created At</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.partner_id or '' }}</td>
+          <td class="small">{{ (r.api_key[:12] + '...') if r.api_key else '' }}</td>
+          <td>{{ r.action }}</td>
+          <td class="small">{{ r.payload or '' }}</td>
+          <td class="small">{{ r.created_at }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6">No rows</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </body>
+</html>

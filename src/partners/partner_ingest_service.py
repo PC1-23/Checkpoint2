@@ -45,6 +45,7 @@ def upsert_products(conn: sqlite3.Connection, products: List[Dict], partner_id: 
                 stock = int(p.get("stock", 0))
 
                 # Prefer matching by sku if present (if schema supports it), otherwise match by name
+                # Use case- and whitespace-insensitive name match to avoid missing existing products
                 prod_id = None
                 if sku:
                     try:
@@ -55,7 +56,12 @@ def upsert_products(conn: sqlite3.Connection, products: List[Dict], partner_id: 
                         # sku column not present; fall back to name
                         prod_id = None
                 if not prod_id:
-                    r = cur.execute("SELECT id FROM product WHERE name = ?", (name,)).fetchone()
+                    # normalize name lookup to lower(trim(name)) to match ingest normalization
+                    try:
+                        r = cur.execute("SELECT id FROM product WHERE lower(trim(name)) = lower(trim(?))", (name,)).fetchone()
+                    except sqlite3.OperationalError:
+                        # fallback to exact match if lower/trim unsupported for some reason
+                        r = cur.execute("SELECT id FROM product WHERE name = ?", (name,)).fetchone()
                     if r:
                         prod_id = r[0]
 
@@ -128,7 +134,10 @@ def validate_products(products: List[Dict], strict: bool = False) -> Tuple[List[
             name = (p.get("name") or "").strip()
             if not name:
                 raise ValueError("name is required")
-            price = p.get("price_cents", 0)
+            # price_cents must be present and an integer >= 0. Treat missing/blank as error.
+            if "price_cents" not in p or p.get("price_cents") in (None, ""):
+                raise ValueError("price_cents is required")
+            price = p.get("price_cents")
             if not isinstance(price, int):
                 try:
                     price = int(price)

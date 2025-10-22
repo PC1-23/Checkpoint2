@@ -10,10 +10,77 @@
       <label for="api_key">API Key</label>
       <input type="text" name="api_key" id="api_key" placeholder="X-API-Key" />
       <br/>
+      <label for="async">Async</label>
+      <input type="checkbox" name="async" id="async" /> (enqueue job and return job_id)
+      <br/>
       <label for="file">Feed file (CSV or JSON)</label>
       <input type="file" name="file" id="file" />
       <br/>
-      <button type="submit">Upload</button>
+      <button type="button" id="smart_upload">Upload</button>
     </form>
+    <pre id="json_response" style="white-space:pre-wrap;border:1px solid #ccc;padding:8px;margin-top:8px;display:none;"></pre>
+    <script>
+      const form = document.querySelector('form[action="/partner/ingest"]');
+      const asyncBox = document.getElementById('async');
+      form.addEventListener('submit', function (ev) {
+        if (asyncBox.checked) {
+          // Append async=1 to the action so server treats it as async
+          form.action = '/partner/ingest?async=1';
+        } else {
+          form.action = '/partner/ingest';
+        }
+      });
+
+      // Smart uploader: decide between JSON raw POST or multipart/form-data submit
+      const smartBtn = document.getElementById('smart_upload');
+      const respPre = document.getElementById('json_response');
+      smartBtn.addEventListener('click', async function () {
+        respPre.style.display = 'none';
+        const fileEl = document.getElementById('file');
+        const apiKey = document.getElementById('api_key').value;
+        if (!fileEl.files || fileEl.files.length === 0) {
+          alert('Please choose a file first');
+          return;
+        }
+        const f = fileEl.files[0];
+        // decide based on filename or file type
+        const name = (f.name || '').toLowerCase();
+        const isJson = name.endsWith('.json') || f.type === 'application/json';
+        const url = '/partner/ingest' + (asyncBox.checked ? '?async=1' : '');
+        try {
+          if (isJson) {
+            // POST raw JSON with proper header so JSON adapter is used
+            const text = await f.text();
+            const r = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': apiKey
+              },
+              body: text
+            });
+            const txt = await r.text();
+            let json;
+            try { json = JSON.parse(txt); } catch (e) { json = txt; }
+            respPre.textContent = `Status: ${r.status}\n\n` + (typeof json === 'string' ? json : JSON.stringify(json, null, 2));
+            respPre.style.display = 'block';
+          } else {
+            // For CSV / multipart uploads use fetch + FormData so we can show response inline
+            const formData = new FormData();
+            formData.append('file', f);
+            formData.append('api_key', apiKey);
+            const r = await fetch(url, { method: 'POST', body: formData });
+            const txt = await r.text();
+            let json;
+            try { json = JSON.parse(txt); } catch (e) { json = txt; }
+            respPre.textContent = `Status: ${r.status}\n\n` + (typeof json === 'string' ? json : JSON.stringify(json, null, 2));
+            respPre.style.display = 'block';
+          }
+        } catch (err) {
+          respPre.textContent = 'Request failed: ' + err;
+          respPre.style.display = 'block';
+        }
+      });
+    </script>
   </body>
   </html>

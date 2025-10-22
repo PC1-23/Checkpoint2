@@ -13,8 +13,17 @@ def parse_json_feed(payload: bytes) -> List[Dict]:
     for item in data:
         sku = str(item.get("sku") or item.get("id") or "").strip()
         name = str(item.get("name", "")).strip()
-        price = item.get("price_cents") if item.get("price_cents") is not None else item.get("price", 0)
-        # Normalize price to integer cents
+        # don't default missing price to 0; let validator report missing/blank
+        if "price_cents" in item:
+            price = item.get("price_cents")
+        elif "price" in item:
+            price = item.get("price")
+        else:
+            price = None
+        # Normalize price to integer cents when possible. If parsing fails,
+        # keep the original value so validation can reject it with a
+        # structured validation error instead of raising here.
+        price_cents = None
         if isinstance(price, int):
             price_cents = price
         elif isinstance(price, float):
@@ -26,41 +35,83 @@ def parse_json_feed(payload: bytes) -> List[Dict]:
                 try:
                     price_cents = int(float(price) * 100)
                 except Exception:
-                    price_cents = 0
+                    # leave as raw value (could be string) and let validator handle it
+                    price_cents = price
 
-        out.append({
+        # stock: attempt to coerce to int, otherwise keep raw value for validation
+        # stock: only coerce if present; leave as None when missing so validator can enforce presence
+        raw_stock = item.get("stock") if "stock" in item else None
+        try:
+            stock_val = int(raw_stock) if raw_stock is not None and raw_stock != "" else None
+        except Exception:
+            stock_val = raw_stock
+
+        obj = {
             "sku": sku,
             "name": name,
-            "price_cents": price_cents,
-            "stock": int(item.get("stock", 0)),
             "partner_id": item.get("partner_id", "unknown"),
             "extra": item,
-        })
+        }
+        # include price_cents and stock keys only when present (may be None to signal missing)
+        obj["price_cents"] = price_cents
+        obj["stock"] = stock_val
+        out.append(obj)
     return out
 
 def parse_csv_feed(payload: bytes) -> List[Dict]:
-    s = payload.decode("utf-8")
-    reader = csv.DictReader(StringIO(s))
+    # tolerate BOM and various delimiters (comma, semicolon, tab, pipe)
+    s = payload.decode("utf-8-sig")
+    # try to detect delimiter using csv.Sniffer; fall back to comma
+    delimiter = ','
+    try:
+        sample_lines = s.splitlines()
+        sample = '\n'.join(sample_lines[:2]) if sample_lines else s
+        dialect = csv.Sniffer().sniff(sample, delimiters=[',', ';', '\t', '|'])
+        delimiter = dialect.delimiter
+    except Exception:
+        # couldn't sniff reliably; keep comma
+        delimiter = ','
+
+    reader = csv.DictReader(StringIO(s), delimiter=delimiter)
     out = []
     for row in reader:
-        price = row.get("price_cents") or row.get("price") or "0"
-        try:
-            price_cents = int(price)
-        except ValueError:
+        # prefer explicit price_cents, then price. Keep raw if parsing fails so
+        # validate_products can report an error instead of this function raising.
+        # prefer explicit price_cents, then price. Leave as None when blank so validator rejects missing price
+        if "price_cents" in row and row.get("price_cents") != "":
+            price = row.get("price_cents")
+        elif "price" in row and row.get("price") != "":
+            price = row.get("price")
+        else:
+            price = None
+        price_cents = None
+        if price is not None and price != "":
             try:
-                price_cents = int(float(price) * 100)
+                price_cents = int(price)
             except Exception:
-                price_cents = 0
+                try:
+                    price_cents = int(float(price) * 100)
+                except Exception:
+                    price_cents = price
         sku = str(row.get("sku") or row.get("id") or "").strip()
         name = str(row.get("name", "")).strip()
-        out.append({
+
+        # stock: attempt to coerce to int, otherwise keep raw value for validation
+        raw_stock = row.get("stock") if "stock" in row else None
+        try:
+            stock_val = int(raw_stock) if raw_stock is not None and raw_stock != "" else None
+        except Exception:
+            stock_val = raw_stock
+
+        obj = {
             "sku": sku,
             "name": name,
-            "price_cents": price_cents,
-            "stock": int(row.get("stock", 0)),
             "partner_id": row.get("partner_id", "unknown"),
             "extra": row,
-        })
+        }
+        obj["price_cents"] = price_cents
+        obj["stock"] = stock_val
+        out.append(obj)
     return out
 
 

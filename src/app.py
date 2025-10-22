@@ -23,6 +23,13 @@ def create_app() -> Flask:
 
     from .flash_sales.routes import flash_bp
     app.register_blueprint(flash_bp)
+    # Register partners blueprint (ingest, diagnostics, integrability)
+    try:
+        from .partners.routes import bp as partners_bp
+        app.register_blueprint(partners_bp)
+    except Exception:
+        # If partners blueprint can't be imported, skip registration to avoid startup failure in tests
+        pass
 
     root = Path(__file__).resolve().parents[1]
     db_path = os.environ.get("APP_DB_PATH", str(root / "app.sqlite"))
@@ -33,6 +40,16 @@ def create_app() -> Flask:
 
     def get_repo(conn: sqlite3.Connection) -> SalesRepo:
         return SalesRepo(conn, AProductRepo(conn))
+
+    # Start background ingest worker if partners blueprint is available
+    try:
+        from .partners.ingest_queue import start_worker
+        root = Path(__file__).resolve().parents[1]
+        db_path = os.environ.get("APP_DB_PATH", str(root / "app.sqlite"))
+        start_worker(db_path)
+    except Exception:
+        # best-effort: don't fail app startup if worker can't be started
+        pass
 
     @app.route("/")
     def index():

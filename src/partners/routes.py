@@ -1,6 +1,7 @@
 from __future__ import annotations
-from flask import Flask, request, render_template, abort, jsonify
+from flask import Blueprint, request, render_template, abort, jsonify, session, redirect, url_for
 from pathlib import Path
+from flask import Flask
 import json
 from .partner_adapters import parse_feed
 from .integrability import get_contract, validate_against_contract
@@ -8,9 +9,19 @@ from .partner_ingest_service import upsert_products
 from .ingest_queue import enqueue_feed, start_worker
 from .metrics import get_metrics
 from .security import check_rate_limit, record_audit
+from .security import try_acquire_inflight, release_inflight
 import sqlite3, os
 
-app = Flask(__name__, template_folder=Path(__file__).parent.joinpath("templates"))
+bp = Blueprint("partners", __name__, template_folder=Path(__file__).parent.joinpath("templates"))
+
+
+def _is_admin_request() -> bool:
+    """Return True if request is authenticated as admin either via session or header."""
+    if session.get("is_admin"):
+        return True
+    admin_key = request.headers.get("X-Admin-Key")
+    expected = os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
+    return bool(admin_key and admin_key == expected)
 
 
 def get_conn():
@@ -19,27 +30,73 @@ def get_conn():
     return sqlite3.connect(str(db_path))
 
 
-@app.get("/")
+@bp.get("/")
 def index():
     return render_template("partners/partner_upload.html")
 
 
-# Start background services at module import / app creation time. This avoids
-# using the deprecated `before_first_request` hook (removed in Flask 2.3).
-# Services are started in a guarded try/except so tests or environments without
-# APScheduler won't fail.
-try:
-    root = Path(__file__).resolve().parents[2]
-    db_path = str(Path(os.environ.get("APP_DB_PATH") or root / "app.sqlite"))
-    start_worker(db_path)
-except Exception:
-    # If anything goes wrong starting background services during import, don't
-    # crash the app import (tests will still run). The worker/scheduler can be
-    # started manually if needed.
-    pass
+@bp.get('/partner/admin')
+def partner_admin():
+    """Small admin UI linking to useful partner endpoints."""
+    return render_template('partners/admin.html')
 
 
-@app.post("/partner/ingest")
+@bp.post('/partner/admin/login')
+def partner_admin_login():
+    data = request.get_json(force=True)
+    key = data.get('admin_key')
+    expected = os.environ.get('ADMIN_API_KEY') or 'admin-demo-key'
+    if key and key == expected:
+        session['is_admin'] = True
+        return ('OK', 200)
+    abort(401, 'Invalid admin key')
+
+
+@bp.post('/partner/admin/logout')
+def partner_admin_logout():
+    session.pop('is_admin', None)
+    return ('OK', 200)
+
+
+@bp.get('/partner/admin/audit')
+def partner_admin_audit():
+    """Admin page: view recent partner ingest audit rows with simple filters."""
+    if not _is_admin_request():
+        abort(401, "Missing or invalid admin key")
+
+    action_filter = request.args.get('action')
+    api_key_prefix = request.args.get('api_key_prefix')
+    limit = int(request.args.get('limit', 100))
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        q = "SELECT id, partner_id, api_key, action, payload, created_at FROM partner_ingest_audit"
+        clauses = []
+        params = []
+        if action_filter:
+            clauses.append("action = ?")
+            params.append(action_filter)
+        if api_key_prefix:
+            clauses.append("api_key LIKE ?")
+            params.append(api_key_prefix + '%')
+        if clauses:
+            q += " WHERE " + " AND ".join(clauses)
+        q += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        cur.execute(q, params)
+        rows = [dict(id=r[0], partner_id=r[1], api_key=r[2], action=r[3], payload=r[4], created_at=r[5]) for r in cur.fetchall()]
+        return render_template('partners/audit.html', rows=rows, action_filter=action_filter, api_key_prefix=api_key_prefix)
+    finally:
+        conn.close()
+
+
+# The worker is started by the main application (create_app) when the
+# partners blueprint is registered. This keeps startup centralized and avoids
+# background threads being created at import time (helps tests).
+
+
+@bp.post("/partner/ingest")
 def partner_ingest():
     api_key = request.headers.get("X-API-Key") or request.form.get("api_key")
     if not api_key:
@@ -57,10 +114,36 @@ def partner_ingest():
         record_audit(None, api_key, "rate_limited")
         abort(429, "Rate limit exceeded")
 
-    # Choose adapter by content type or file extension
-    content_type = request.content_type or ""
-    payload = request.get_data()
+    # Prevent concurrent uploads from the same API key to avoid sqlite locks
+    # and to make the demo deterministically exercise rate-limiting and
+    # throttling behavior. This is an in-process guard only.
+    if not try_acquire_inflight(api_key):
+        record_audit(None, api_key, "inflight_blocked")
+        abort(429, "Another upload in progress for this API key")
+
+    # Choose adapter by content type or uploaded file
     feed_version = request.headers.get("X-Feed-Version") or request.args.get("feed_version")
+    # If a file was uploaded via multipart/form-data, read that file stream
+    if request.files and 'file' in request.files:
+        f = request.files['file']
+        try:
+            payload = f.read()
+        except Exception:
+            # fallback to raw body
+            payload = request.get_data()
+        # prefer the file's content type, otherwise infer from filename
+        content_type = (getattr(f, 'content_type', None) or '')
+        filename = (getattr(f, 'filename', '') or '').lower()
+        if not content_type:
+            if filename.endswith('.json'):
+                content_type = 'application/json'
+            elif filename.endswith('.csv'):
+                content_type = 'text/csv'
+    else:
+        # raw POST (e.g., fetch with application/json)
+        content_type = request.content_type or ""
+        payload = request.get_data()
+
     products = parse_feed(payload, content_type=content_type, feed_version=feed_version)
 
     # compute feed hash for idempotency
@@ -95,9 +178,20 @@ def partner_ingest():
         # Call the module-level enqueue_feed (may be monkeypatched in tests)
         jid = None
         try:
-            enqueue_feed(partner_id or 0, products + [], feed_hash=feed_hash)
-        except TypeError:
-            enqueue_feed(partner_id or 0, products + [])
+            try:
+                enqueue_feed(partner_id or 0, products + [], feed_hash=feed_hash)
+            except TypeError:
+                enqueue_feed(partner_id or 0, products + [])
+        except sqlite3.OperationalError as e:
+            # Map sqlite 'database is locked' to 503 so UI shows an explicit
+            # transient server-unavailable response instead of the Werkzeug
+            # debugger stack trace during demos.
+            record_audit(partner_id, api_key, "enqueue_db_locked", payload=str(e))
+            release_inflight(api_key)
+            abort(503, "Temporarily unavailable; please retry")
+        except Exception:
+            release_inflight(api_key)
+            raise
 
         # If the module-level enqueue_feed is the original implementation, try to get a job id
         try:
@@ -112,55 +206,43 @@ def partner_ingest():
         record_audit(partner_id, api_key, "enqueue", payload=str(feed_hash))
         # return JSON with job id when available
         if jid:
+            release_inflight(api_key)
             return (jsonify({"job_id": jid, "status": "accepted"}), 202)
+        release_inflight(api_key)
         return (jsonify({"status": "accepted"}), 202)
 
     # Synchronous validation + upsert with structured feedback
     conn = get_conn()
     try:
-        valid, validation_errors = __import__("src.partners.partner_ingest_service", fromlist=["validate_products"]).validate_products(products)
-        if not valid:
-            # return structured validation summary
+        # validate_products returns (valid_items, errors)
+        valid_items, validation_errors = __import__("src.partners.partner_ingest_service", fromlist=["validate_products"]).validate_products(products)
+        # If there are any validation errors, reject the entire upload (consistent with sync behavior)
+        if validation_errors:
             summary = {"status": "validation_failed", "accepted": 0, "rejected": len(validation_errors), "errors": validation_errors}
             record_audit(partner_id, api_key, "ingest_sync_validation_failed", payload=str(feed_hash))
             return (jsonify(summary), 422)
-        upserted, upsert_errors = upsert_products(conn, valid, partner_id=partner_id, feed_hash=feed_hash)
+        upserted, upsert_errors = upsert_products(conn, valid_items, partner_id=partner_id, feed_hash=feed_hash)
     finally:
-        conn.close()
-    # Persist a small diagnostics blob into partner_ingest_jobs for traceability (if job exists)
-    try:
-        from .ingest_queue import enqueue_feed_db
-        # create a diagnostic record by inserting a job row with status=done
-        root = Path(__file__).resolve().parents[2]
-        db_path = str(Path(os.environ.get("APP_DB_PATH") or root / "app.sqlite"))
-        import sqlite3
-        conn2 = sqlite3.connect(db_path)
-        cur2 = conn2.cursor()
-        diag = {"accepted": upserted, "rejected": len(upsert_errors), "errors": upsert_errors}
-        cur2.execute("INSERT INTO partner_ingest_jobs (partner_id, payload, status, diagnostics, feed_hash, processed_at) VALUES (?, ?, 'done', ?, ?, CURRENT_TIMESTAMP)", (partner_id or 0, json.dumps(valid), json.dumps(diag), feed_hash))
-        conn2.commit()
-        conn2.close()
-    except Exception:
-        # best-effort diagnostics persistence; continue
-        pass
-    record_audit(partner_id, api_key, "ingest_sync", payload=str(feed_hash))
-
-    return (jsonify({"status": "done", "accepted": upserted, "rejected": len(upsert_errors), "errors": upsert_errors}), 200)
+        try:
+            conn.close()
+        finally:
+            # ensure inflight slot released even for sync path
+            release_inflight(api_key)
 # Integrability / onboarding endpoints
 
 
-@app.get('/partner/contract')
+@bp.get('/partner/contract')
 def partner_contract():
     """Return machine-readable contract for partner feeds."""
     return jsonify(get_contract())
 
 
-@app.get('/partner/contract/example')
+@bp.get('/partner/contract/example')
 def partner_contract_example():
     return jsonify(get_contract().get("example"))
 
 
-@app.post('/partner/contract/validate')
+@bp.post('/partner/contract/validate')
 def partner_contract_validate():
     """Sandbox validation endpoint for partners to validate sample feeds."""
     content_type = request.content_type or ""
@@ -173,11 +255,10 @@ def partner_contract_validate():
     return jsonify({"status": "ok", "accepted": len(valid), "rejected": 0})
 
 
-@app.post('/partner/onboard')
+@bp.post('/partner/onboard')
 def partner_onboard():
     """Simple demo onboarding: create a partner and issue an API key. Admin-only in demo."""
-    admin_key = request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
-    if admin_key != (request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+    if not _is_admin_request():
         abort(401, "Missing or invalid admin key")
     data = request.get_json(force=True)
     name = data.get("name")
@@ -197,7 +278,43 @@ def partner_onboard():
         conn.close()
 
 
-@app.get('/partner/help')
+
+@bp.post('/partner/onboard_form')
+def partner_onboard_form():
+    """Admin UI helper: create a partner and return the API key as JSON.
+
+    NOTE: For the demo this endpoint does not require the X-Admin-Key header so
+    the admin UI can call it directly without exposing ADMIN_API_KEY in client JS.
+    In a real deployment this must be protected by server-side authentication.
+    """
+    data = None
+    # Accept form-encoded or JSON
+    if request.content_type and request.content_type.startswith('application/json'):
+        data = request.get_json(force=True)
+    else:
+        # form data
+        form = request.form
+        data = {"name": form.get('name'), "format": form.get('format', 'json'), "description": form.get('description', '')}
+
+    name = data.get('name')
+    if not name:
+        abort(400, 'Missing partner name')
+
+    import secrets
+    api_key = secrets.token_urlsafe(16)
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO partner (name, format) VALUES (?, ?)", (name, data.get('format', 'json')))
+        pid = cur.lastrowid
+        cur.execute("INSERT INTO partner_api_keys (partner_id, api_key, description) VALUES (?, ?, ?)", (pid, api_key, data.get('description', 'onboarded key')))
+        conn.commit()
+        return jsonify({"partner_id": pid, "api_key": api_key})
+    finally:
+        conn.close()
+
+
+@bp.get('/partner/help')
 def partner_help():
     """Human-friendly quickstart for partners (small page with sample curl)."""
     # Keep this small and machine-readable (JSON) for discoverability
@@ -212,12 +329,12 @@ def partner_help():
 
 
 # JSON error handler: return consistent JSON with {error, details}
-@app.errorhandler(400)
-@app.errorhandler(401)
-@app.errorhandler(403)
-@app.errorhandler(404)
-@app.errorhandler(429)
-@app.errorhandler(500)
+@bp.errorhandler(400)
+@bp.errorhandler(401)
+@bp.errorhandler(403)
+@bp.errorhandler(404)
+@bp.errorhandler(429)
+@bp.errorhandler(500)
 def json_error_handler(err):
     try:
         code = getattr(err, 'code', 500)
@@ -229,7 +346,7 @@ def json_error_handler(err):
         description = str(err)
     payload = {"error": name, "details": description}
     return jsonify(payload), code
-@app.post('/partner/schedule')
+@bp.post('/partner/schedule')
 def partner_schedule():
     """Trigger scheduled ingestion for a partner. For demo, this simply returns 200.
 
@@ -238,11 +355,10 @@ def partner_schedule():
     return ("Scheduled", 200)
 
 
-@app.get('/partner/schedules')
+@bp.get('/partner/schedules')
 def list_schedules():
     """Admin endpoint: list all schedules."""
-    admin_key = request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
-    if admin_key != (request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+    if not _is_admin_request():
         abort(401, "Missing or invalid admin key")
     conn = get_conn()
     try:
@@ -256,13 +372,12 @@ def list_schedules():
     record_audit(None, admin_key, "admin_list_schedules")
 
 
-@app.post('/partner/schedules')
+@bp.post('/partner/schedules')
 def create_schedule():
     """Admin endpoint: create a schedule. Expects JSON: {partner_id, schedule_type, schedule_value, enabled}
     schedule_value may be a JSON object (for interval) or string (for cron).
     """
-    admin_key = request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
-    if admin_key != (request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+    if not _is_admin_request():
         abort(401, "Missing or invalid admin key")
     data = request.get_json(force=True)
     partner_id = data.get('partner_id')
@@ -285,10 +400,9 @@ def create_schedule():
     record_audit(None, admin_key, "admin_create_schedule", payload=str(data))
 
 
-@app.delete('/partner/schedules/<int:sid>')
+@bp.delete('/partner/schedules/<int:sid>')
 def delete_schedule(sid: int):
-    admin_key = request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
-    if admin_key != (request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+    if not _is_admin_request():
         abort(401, "Missing or invalid admin key")
     conn = get_conn()
     try:
@@ -301,15 +415,14 @@ def delete_schedule(sid: int):
     record_audit(None, admin_key, "admin_delete_schedule", payload=str(sid))
 
 
-@app.get('/partner/jobs')
+@bp.get('/partner/jobs')
 def partner_jobs():
     """Inspect recent partner ingest jobs and counts.
 
     Returns JSON with counts per status and the last 20 jobs.
     """
     # admin-only
-    admin_key = request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
-    if not admin_key or admin_key != (request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+    if not _is_admin_request():
         abort(401, "Missing or invalid admin key")
 
     conn = get_conn()
@@ -326,7 +439,7 @@ def partner_jobs():
         conn.close()
 
 
-@app.get('/partner/jobs/<int:job_id>')
+@bp.get('/partner/jobs/<int:job_id>')
 def partner_job_status(job_id: int):
     """Return structured diagnostics and status for a specific job.
 
@@ -334,8 +447,7 @@ def partner_job_status(job_id: int):
     Admin or partner key required and ownership is enforced.
     """
     api_key = request.headers.get("X-API-Key")
-    admin_key = request.headers.get("X-Admin-Key")
-    if not api_key and not admin_key:
+    if not api_key and not _is_admin_request():
         abort(401, "Missing API key")
     conn = get_conn()
     try:
@@ -345,8 +457,8 @@ def partner_job_status(job_id: int):
         if not row:
             abort(404, "Job not found")
         job = dict(id=row[0], partner_id=row[1], status=row[2], created_at=row[3], processed_at=row[4])
-        # enforce ownership unless admin
-        if admin_key and admin_key == (os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+        # enforce ownership unless admin (session or header)
+        if _is_admin_request():
             pass
         else:
             # verify api_key belongs to partner
@@ -374,12 +486,11 @@ def partner_job_status(job_id: int):
 
 
 
-@app.get('/partner/diagnostics/<int:diag_id>')
+@bp.get('/partner/diagnostics/<int:diag_id>')
 def partner_diagnostics(diag_id: int):
     """Return offloaded diagnostics artifact. Admin or owning partner may fetch."""
     api_key = request.headers.get("X-API-Key")
-    admin_key = request.headers.get("X-Admin-Key")
-    if not api_key and not admin_key:
+    if not api_key and not _is_admin_request():
         abort(401, "Missing API key")
     conn = get_conn()
     try:
@@ -389,8 +500,8 @@ def partner_diagnostics(diag_id: int):
         if not row:
             abort(404, "Diagnostics not found")
         job_id = row[1]
-        # ownership check: admin can access any, otherwise ensure api_key belongs to job's partner
-        if not (admin_key and admin_key == (os.environ.get("ADMIN_API_KEY") or "admin-demo-key")):
+        # ownership check: admin (session/header) can access any, otherwise ensure api_key belongs to job's partner
+        if not _is_admin_request():
             cur.execute("SELECT partner_id FROM partner_ingest_jobs WHERE id = ?", (job_id,))
             j = cur.fetchone()
             if not j:
@@ -408,30 +519,28 @@ def partner_diagnostics(diag_id: int):
         conn.close()
 
 
-@app.get('/partner/metrics')
+@bp.get('/partner/metrics')
 def partner_metrics():
-    admin_key = request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
-    if not admin_key or admin_key != (request.headers.get("X-Admin-Key") or os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+    if not _is_admin_request():
         abort(401, "Missing or invalid admin key")
     return jsonify(get_metrics())
 
 
-@app.post('/partner/jobs/<int:job_id>/requeue')
+@bp.post('/partner/jobs/<int:job_id>/requeue')
 def partner_job_requeue(job_id: int):
     """Requeue a specific job.
 
     If caller provides X-Admin-Key (matching ADMIN_API_KEY), allow requeuing any job.
     Otherwise require X-API-Key belonging to the job's partner.
     """
-    admin_key = request.headers.get("X-Admin-Key")
     api_key = request.headers.get("X-API-Key")
-    if not admin_key and not api_key:
+    if not _is_admin_request() and not api_key:
         abort(401, "Missing API key")
     conn = get_conn()
     try:
         cur = conn.cursor()
         # if admin key provided and valid, allow any job
-        if admin_key and admin_key == (os.environ.get("ADMIN_API_KEY") or "admin-demo-key"):
+        if _is_admin_request():
             cur.execute("UPDATE partner_ingest_jobs SET status='pending', next_run = NULL, attempts = 0, error = NULL WHERE id = ?", (job_id,))
             conn.commit()
             return ("Requeued", 200)
@@ -458,7 +567,7 @@ def partner_job_requeue(job_id: int):
         conn.close()
 
 
-@app.post('/partner/jobs/requeue_failed')
+@bp.post('/partner/jobs/requeue_failed')
 def partner_requeue_failed():
     """Requeue all failed jobs for the partner identified by X-API-Key."""
     api_key = request.headers.get("X-API-Key")
@@ -479,3 +588,16 @@ def partner_requeue_failed():
         return jsonify({"requeued": updated})
     finally:
         conn.close()
+
+# Backwards compatibility: some tests import `app` from this module. Create
+# a small Flask app that registers the blueprint so `from src.partners.routes import app`
+# continues to work. This app is only a convenience for test clients and local
+# runs; the main project registers the `bp` blueprint into the primary app.
+try:
+    test_app = Flask(__name__, template_folder=Path(__file__).parent.joinpath("templates"))
+    test_app.register_blueprint(bp)
+    app = test_app
+except Exception:
+    # If Flask isn't available for some reason in the test environment,
+    # expose the blueprint object as `app` to avoid import errors.
+    app = bp

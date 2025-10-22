@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Partner Admin</title>
+  </head>
+  <body>
+    <h1>Partner Admin</h1>
+    <div id="admin_auth">
+      <label for="admin_key">Admin Key:</label>
+      <input type="password" id="admin_key" placeholder="enter admin key" />
+      <button type="button" id="admin_login">Login</button>
+      <button type="button" id="admin_logout" style="display:none;">Logout</button>
+      <span id="admin_msg" style="margin-left:1em;color:#444"></span>
+    </div>
+    <ul>
+      <li><a href="/partner/contract">Machine-readable contract</a></li>
+      <li><a href="/partner/contract/example">Contract example</a></li>
+      <li><a href="/partner/help">Quickstart / Help</a></li>
+      <li><a href="/partner/jobs">Jobs (admin only)</a></li>
+      <li><a href="/partner/metrics">Metrics (admin only)</a></li>
+      <li><a href="/partner/admin/audit">Audit (admin only)</a></li>
+    </ul>
+    <h2>Lookup job</h2>
+    <p>
+      <label for="job_id">Job ID:</label>
+      <input type="number" id="job_id" min="1" />
+      <button type="button" id="job_lookup">View Job</button>
+    </p>
+    <pre id="job_resp" style="white-space:pre-wrap;border:1px solid #ccc;padding:8px;display:none;"></pre>
+    <script>
+      // admin login helper: store a session via posting to server; the server
+      // sets a session cookie on success which is used for subsequent admin requests.
+      const adminLoginBtn = document.getElementById('admin_login');
+      const adminLogoutBtn = document.getElementById('admin_logout');
+      const adminMsg = document.getElementById('admin_msg');
+      adminLoginBtn.addEventListener('click', async function () {
+        const k = document.getElementById('admin_key').value;
+        if (!k) { adminMsg.textContent = 'Enter admin key'; return; }
+        // Include credentials so the browser accepts the Set-Cookie for the session
+        const r = await fetch('/partner/admin/login', {method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'same-origin', body: JSON.stringify({admin_key: k})});
+        if (r.status === 200) { adminMsg.textContent = 'Logged in'; adminLogoutBtn.style.display='inline'; adminLoginBtn.style.display='none'; }
+        else { adminMsg.textContent = 'Login failed'; }
+      });
+      adminLogoutBtn.addEventListener('click', async function () {
+        await fetch('/partner/admin/logout', {method: 'POST', credentials: 'same-origin'});
+        adminMsg.textContent = 'Logged out'; adminLogoutBtn.style.display='none'; adminLoginBtn.style.display='inline';
+      });
+
+      const jobBtn = document.getElementById('job_lookup');
+      const jobResp = document.getElementById('job_resp');
+      jobBtn.addEventListener('click', async function () {
+        const id = document.getElementById('job_id').value;
+        if (!id) { alert('Enter a job id'); return; }
+        jobResp.style.display = 'none';
+        try {
+    // Use the session cookie (if logged in) to access admin-only job endpoint.
+    const r = await fetch(`/partner/jobs/${id}`, { credentials: 'same-origin' });
+          const txt = await r.text();
+          try { const json = JSON.parse(txt); jobResp.textContent = JSON.stringify(json, null, 2); } catch(e) { jobResp.textContent = txt; }
+          jobResp.style.display = 'block';
+        } catch (err) {
+          jobResp.textContent = 'Request failed: ' + err;
+          jobResp.style.display = 'block';
+        }
+      });
+    </script>
+    <h2>Onboard partner</h2>
+    <p>
+      <label for="on_name">Partner name:</label>
+      <input type="text" id="on_name" placeholder="Acme Partner" />
+      <label for="on_format">Format:</label>
+      <select id="on_format"><option value="json">json</option><option value="csv">csv</option></select>
+      <label for="on_desc">Description:</label>
+      <input type="text" id="on_desc" placeholder="description" />
+      <button type="button" id="on_btn">Create Partner</button>
+    </p>
+    <pre id="on_resp" style="white-space:pre-wrap;border:1px solid #ccc;padding:8px;display:none;"></pre>
+    <script>
+      const onBtn = document.getElementById('on_btn');
+      const onResp = document.getElementById('on_resp');
+      onBtn.addEventListener('click', async function () {
+        const name = document.getElementById('on_name').value;
+        const format = document.getElementById('on_format').value;
+        const desc = document.getElementById('on_desc').value;
+        if (!name) { alert('Enter partner name'); return; }
+        onResp.style.display = 'none';
+        try {
+          const r = await fetch('/partner/onboard_form', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name: name, format: format, description: desc})
+          });
+          const txt = await r.text();
+          try { const json = JSON.parse(txt); onResp.textContent = JSON.stringify(json, null, 2); } catch(e) { onResp.textContent = txt; }
+          onResp.style.display = 'block';
+        } catch (err) {
+          onResp.textContent = 'Request failed: ' + err;
+          onResp.style.display = 'block';
+        }
+      });
+    </script>
+  </body>
+</html>
