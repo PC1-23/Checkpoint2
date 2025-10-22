@@ -13,13 +13,16 @@
       <button type="button" id="admin_logout" style="display:none;">Logout</button>
       <span id="admin_msg" style="margin-left:1em;color:#444"></span>
     </div>
+    <div id="admin_banner" style="margin-top:1em;padding:8px;border:1px solid #e1e1e1;background:#fff8e1;color:#333;display:none;">
+      <strong id="banner_text">Not logged in — admin actions are disabled</strong>
+    </div>
     <ul>
       <li><a href="/partner/contract">Machine-readable contract</a></li>
       <li><a href="/partner/contract/example">Contract example</a></li>
       <li><a href="/partner/help">Quickstart / Help</a></li>
-      <li><a href="/partner/jobs">Jobs (admin only)</a></li>
-      <li><a href="/partner/metrics">Metrics (admin only)</a></li>
-      <li><a href="/partner/admin/audit">Audit (admin only)</a></li>
+      <li><button id="btn_jobs" type="button" disabled>Jobs (admin only)</button></li>
+      <li><button id="btn_metrics" type="button" disabled>Metrics (admin only)</button></li>
+      <li><button id="btn_audit" type="button" disabled>Audit (admin only)</button></li>
     </ul>
     <h2>Lookup job</h2>
     <p>
@@ -39,12 +42,22 @@
         if (!k) { adminMsg.textContent = 'Enter admin key'; return; }
         // Include credentials so the browser accepts the Set-Cookie for the session
         const r = await fetch('/partner/admin/login', {method: 'POST', headers: {'Content-Type':'application/json'}, credentials: 'same-origin', body: JSON.stringify({admin_key: k})});
-        if (r.status === 200) { adminMsg.textContent = 'Logged in'; adminLogoutBtn.style.display='inline'; adminLoginBtn.style.display='none'; }
-        else { adminMsg.textContent = 'Login failed'; }
+        if (r.status === 200) {
+          adminMsg.textContent = 'Logged in'; adminLogoutBtn.style.display='inline'; adminLoginBtn.style.display='none';
+          // enable admin buttons and hide banner
+          document.getElementById('btn_jobs').disabled = false;
+          document.getElementById('btn_metrics').disabled = false;
+          document.getElementById('btn_audit').disabled = false;
+          document.getElementById('admin_banner').style.display = 'none';
+        } else { adminMsg.textContent = 'Login failed'; }
       });
       adminLogoutBtn.addEventListener('click', async function () {
         await fetch('/partner/admin/logout', {method: 'POST', credentials: 'same-origin'});
         adminMsg.textContent = 'Logged out'; adminLogoutBtn.style.display='none'; adminLoginBtn.style.display='inline';
+        document.getElementById('btn_jobs').disabled = true;
+        document.getElementById('btn_metrics').disabled = true;
+        document.getElementById('btn_audit').disabled = true;
+        document.getElementById('admin_banner').style.display = 'block';
       });
 
       const jobBtn = document.getElementById('job_lookup');
@@ -55,7 +68,7 @@
         jobResp.style.display = 'none';
         try {
     // Use the session cookie (if logged in) to access admin-only job endpoint.
-    const r = await fetch(`/partner/jobs/${id}`, { credentials: 'same-origin' });
+  const r = await fetch(`/partner/jobs/${id}`, { credentials: 'same-origin', headers: {'X-Requested-With':'XMLHttpRequest'} });
           const txt = await r.text();
           try { const json = JSON.parse(txt); jobResp.textContent = JSON.stringify(json, null, 2); } catch(e) { jobResp.textContent = txt; }
           jobResp.style.display = 'block';
@@ -64,6 +77,67 @@
           jobResp.style.display = 'block';
         }
       });
+      // Admin-only navigation helpers: probe endpoint with same-origin credentials
+      // and show a clear 'Authentication failed' message if the server returns 401.
+      function adminNav(buttonId, url) {
+        const btn = document.getElementById(buttonId);
+        if (!btn) return;
+        btn.addEventListener('click', async function () {
+          try {
+            const r = await fetch(url, { method: 'GET', credentials: 'same-origin', headers: {'X-Requested-With':'XMLHttpRequest'} });
+            // If server returns 401, clear failure.
+            if (r.status === 401) {
+              alert('Authentication failed: admin access required');
+              return;
+            }
+            // fetch follows redirects; detect if we were redirected to the login page.
+            // On redirect, response.redirected is true and response.url will point
+            // to the final location (e.g., /partner/admin/login/).
+            try {
+              const loginPath = '/partner/admin/login';
+              if (r.redirected && r.url && r.url.includes(loginPath)) {
+                alert('Authentication failed: admin access required');
+                return;
+              }
+            } catch (e) {
+              // ignore detection errors
+            }
+            // Otherwise navigate to the page (allow HTML page to load)
+            window.location.href = url;
+          } catch (err) {
+            alert('Request failed: ' + err);
+          }
+        });
+      }
+      adminNav('btn_jobs', '/partner/admin/jobs');
+      adminNav('btn_metrics', '/partner/admin/metrics');
+      adminNav('btn_audit', '/partner/admin/audit');
+
+      // On-load: probe whether the session is authenticated. If not, show banner
+      // and keep admin buttons disabled. This avoids accidental navigation.
+      (async function probeAdminSession() {
+        try {
+          const r = await fetch('/partner/admin/metrics', {method: 'GET', credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}});
+          if (r.status === 200) {
+            // logged in: enable buttons
+            document.getElementById('btn_jobs').disabled = false;
+            document.getElementById('btn_metrics').disabled = false;
+            document.getElementById('btn_audit').disabled = false;
+            document.getElementById('admin_banner').style.display = 'none';
+            adminMsg.textContent = '';
+            adminLogoutBtn.style.display = 'inline';
+            adminLoginBtn.style.display = 'none';
+          } else {
+            document.getElementById('admin_banner').style.display = 'block';
+            document.getElementById('btn_jobs').disabled = true;
+            document.getElementById('btn_metrics').disabled = true;
+            document.getElementById('btn_audit').disabled = true;
+          }
+        } catch (e) {
+          // network error: show banner but keep non-destructive behavior
+          document.getElementById('admin_banner').style.display = 'block';
+        }
+      })();
     </script>
     <h2>Onboard partner</h2>
     <p>

@@ -9,6 +9,10 @@ from typing import Dict
 
 from flask import Flask, redirect, render_template, request, session, url_for, flash
 import sqlite3
+import time
+import uuid
+
+from . import observability
 
 from .dao import SalesRepo, ProductRepo, get_connection
 from .payment import process as payment_process
@@ -27,9 +31,11 @@ def create_app() -> Flask:
     try:
         from .partners.routes import bp as partners_bp
         app.register_blueprint(partners_bp)
-    except Exception:
-        # If partners blueprint can't be imported, skip registration to avoid startup failure in tests
-        pass
+    except Exception as e:
+        # If partners blueprint can't be imported, log the exception so missing
+        # dependencies or syntax errors are visible in the startup logs, then
+        # continue to allow the rest of the app to start for tests.
+        app.logger.exception("Failed to import/register partners blueprint; admin routes unavailable")
 
     root = Path(__file__).resolve().parents[1]
     db_path = os.environ.get("APP_DB_PATH", str(root / "app.sqlite"))
@@ -54,6 +60,38 @@ def create_app() -> Flask:
     @app.route("/")
     def index():
         return redirect(url_for("login"))
+
+    # Configure structured logging for the app
+    try:
+        observability.configure_logging()
+    except Exception:
+        pass
+
+    @app.before_request
+    def _start_timer():
+        request._start_time = time.time()
+        request.request_id = request.headers.get('X-Request-Id') or str(uuid.uuid4())
+
+    @app.after_request
+    def _record_metrics(response):
+        try:
+            path = request.path
+            elapsed = time.time() - getattr(request, '_start_time', time.time())
+            observability.HTTP_REQUESTS.labels(request.method, path, str(response.status_code)).inc()
+            observability.HTTP_LATENCY.labels(path).observe(elapsed)
+        except Exception:
+            pass
+        return response
+
+    @app.get('/metrics')
+    def metrics():
+        # Require session-based admin access to view process metrics
+        try:
+            if not session.get('is_admin'):
+                return ("Missing or invalid admin key", 401)
+            return observability.metrics_endpoint()
+        except Exception:
+            return ("metrics unavailable", 503)
 
     @app.route("/products")
     def products():

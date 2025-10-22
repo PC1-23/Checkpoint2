@@ -56,10 +56,15 @@ def release_inflight(api_key: str) -> None:
 
 def record_audit(partner_id: Optional[int], api_key: Optional[str], action: str, payload: Optional[str] = None):
     db = _get_db_path()
+    # Mask API key in audit rows to avoid leaking secrets
+    safe_key = mask_key(api_key) if api_key else None
     try:
         conn = sqlite3.connect(db)
         cur = conn.cursor()
-        cur.execute("INSERT INTO partner_ingest_audit (partner_id, api_key, action, payload) VALUES (?, ?, ?, ?)", (partner_id, api_key, action, payload))
+        cur.execute(
+            "INSERT INTO partner_ingest_audit (partner_id, api_key, action, payload) VALUES (?, ?, ?, ?)",
+            (partner_id, safe_key, action, payload),
+        )
         conn.commit()
     except Exception:
         # best-effort logging; don't crash the app
@@ -69,6 +74,22 @@ def record_audit(partner_id: Optional[int], api_key: Optional[str], action: str,
             conn.close()
         except Exception:
             pass
+
+
+def mask_key(api_key: Optional[str]) -> Optional[str]:
+    """Return a masked form of the API key for safe storage in audits/logs.
+
+    Shows the first 6 chars and replaces the remainder with '...'.
+    If the key is short, returns a constant placeholder.
+    """
+    if not api_key:
+        return None
+    try:
+        if len(api_key) <= 8:
+            return api_key[:4] + "..."
+        return api_key[:6] + "..."
+    except Exception:
+        return None
 
 
 def verify_api_key(db_path: Optional[str], api_key: str) -> Optional[int]:
@@ -83,10 +104,22 @@ def verify_api_key(db_path: Optional[str], api_key: str) -> Optional[int]:
             db_path = str(Path(os.environ.get("APP_DB_PATH") or root / "app.sqlite"))
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
-        cur.execute("SELECT partner_id, api_key FROM partner_api_keys WHERE api_key = ?", (api_key,))
-        row = cur.fetchone()
-        if row:
-            return row[0]
+        # Support optional hashed keys in DB when HASH_KEYS=true is set in env.
+        hash_keys = os.environ.get("HASH_KEYS", "false").lower() in ("1", "true", "yes")
+        if hash_keys:
+            # Stored keys are hashed; compute hash of provided key and compare
+            import hashlib
+
+            h = hashlib.sha256(api_key.encode()).hexdigest()
+            cur.execute("SELECT partner_id FROM partner_api_keys WHERE api_key = ?", (h,))
+            row = cur.fetchone()
+            if row:
+                return row[0]
+        else:
+            cur.execute("SELECT partner_id FROM partner_api_keys WHERE api_key = ?", (api_key,))
+            row = cur.fetchone()
+            if row:
+                return row[0]
     except Exception:
         pass
     finally:
@@ -95,3 +128,10 @@ def verify_api_key(db_path: Optional[str], api_key: str) -> Optional[int]:
         except Exception:
             pass
     return None
+
+
+def hash_key_for_storage(api_key: str) -> str:
+    """Return a deterministic SHA256 hex digest for storage when hashing is enabled."""
+    import hashlib
+
+    return hashlib.sha256(api_key.encode()).hexdigest()

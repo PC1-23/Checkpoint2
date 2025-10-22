@@ -8,20 +8,51 @@ from .integrability import get_contract, validate_against_contract
 from .partner_ingest_service import upsert_products
 from .ingest_queue import enqueue_feed, start_worker
 from .metrics import get_metrics
-from .security import check_rate_limit, record_audit
+from .security import check_rate_limit, record_audit, mask_key, hash_key_for_storage
 from .security import try_acquire_inflight, release_inflight
 import sqlite3, os
+from prometheus_client import REGISTRY
+import math
+from functools import wraps
 
 bp = Blueprint("partners", __name__, template_folder=Path(__file__).parent.joinpath("templates"))
 
 
 def _is_admin_request() -> bool:
     """Return True if request is authenticated as admin either via session or header."""
-    if session.get("is_admin"):
-        return True
-    admin_key = request.headers.get("X-Admin-Key")
-    expected = os.environ.get("ADMIN_API_KEY") or "admin-demo-key"
-    return bool(admin_key and admin_key == expected)
+    # For UI security, only consider session-based admin authentication.
+    # Programmatic header-based admin access is intentionally disabled so
+    # browser interactions require the login flow.
+    return bool(session.get("is_admin"))
+
+
+def admin_required(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if not _is_admin_request():
+            # If the client is a browser expecting HTML, redirect to the admin
+            # login page so the user can authenticate via the form. API clients
+            # that expect JSON should continue to receive a 401 response.
+            try:
+                from flask import request
+                # If this is an AJAX probe (client sets X-Requested-With),
+                # return 401 so the client-side probe can detect auth failure
+                # without following redirects to the login page.
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    abort(401, "Missing or invalid admin key")
+                accept = request.accept_mimetypes
+                # If the client prefers HTML over JSON (or only accepts HTML),
+                # redirect to the HTML admin login. This covers browsers which
+                # often accept both but prefer HTML.
+                html_q = accept['text/html'] or 0
+                json_q = accept['application/json'] or 0
+                if html_q >= json_q:
+                    return redirect(url_for('.partner_admin_login_get'))
+            except Exception:
+                pass
+            abort(401, "Missing or invalid admin key")
+        return f(*args, **kwargs)
+    return wrapped
 
 
 def get_conn():
@@ -36,20 +67,141 @@ def index():
 
 
 @bp.get('/partner/admin')
+@bp.get('/partner/admin/')
 def partner_admin():
-    """Small admin UI linking to useful partner endpoints."""
+    """Render the admin index (shows admin controls). The page itself is
+    accessible to anyone for discoverability; admin-only actions are
+    protected server-side and are probed by the client before navigation.
+    """
     return render_template('partners/admin.html')
 
 
+@bp.get('/partner/admin/metrics')
+@bp.get('/partner/admin/metrics/')
+@admin_required
+def partner_admin_metrics():
+    """Admin-only: render a small metrics dashboard using in-process Prometheus metrics.
+
+    This is a lightweight demo UI that reads the Prometheus registry and
+    computes simple aggregates (counts per endpoint, approximate p95 latency
+    from histogram buckets, onboarding success rate).
+    """
+    if not _is_admin_request():
+        abort(401, "Missing or invalid admin key")
+
+    # Gather samples from the registry
+    http_counts = {}  # endpoint -> total count
+    latency_buckets = {}  # endpoint -> list of (le, cumulative)
+    latency_count = {}
+    latency_sum = {}
+    onboarding_requests = 0
+    onboarding_success = 0
+    contract_validate = 0
+
+    try:
+        for mf in REGISTRY.collect():
+            name = mf.name
+            for sample in mf.samples:
+                sname, labels, value = sample.name, sample.labels, sample.value
+                # http_requests_total
+                if name == 'http_requests_total':
+                    ep = labels.get('endpoint', '<unknown>')
+                    http_counts[ep] = http_counts.get(ep, 0) + int(value)
+                # latency buckets
+                if name == 'http_request_duration_seconds_bucket':
+                    ep = labels.get('endpoint', '<unknown>')
+                    le = float(labels.get('le', '+Inf'))
+                    latency_buckets.setdefault(ep, []).append((le, int(value)))
+                if name == 'http_request_duration_seconds_count':
+                    ep = labels.get('endpoint', '<unknown>')
+                    latency_count[ep] = int(value)
+                if name == 'http_request_duration_seconds_sum':
+                    ep = labels.get('endpoint', '<unknown>')
+                    latency_sum[ep] = float(value)
+                # onboarding counters
+                if name == 'onboarding_requests_total':
+                    onboarding_requests = int(value)
+                if name == 'onboarding_success_total':
+                    onboarding_success = int(value)
+                if name == 'contract_validate_requests_total':
+                    contract_validate = int(value)
+    except Exception:
+        # best-effort: if registry access fails, show empty dashboard
+        pass
+
+    # Compute approximate p95 per endpoint from buckets
+    p95_by_ep = {}
+    for ep, buckets in latency_buckets.items():
+        # sort by le
+        buckets_sorted = sorted(buckets, key=lambda x: float('inf') if x[0] == '+Inf' else x[0])
+        total = latency_count.get(ep, 0)
+        if total <= 0:
+            p95_by_ep[ep] = None
+            continue
+        threshold = math.ceil(0.95 * total)
+        # buckets are cumulative counts; find first bucket >= threshold
+        cum = 0
+        chosen = None
+        for le, cnt in buckets_sorted:
+            cum = cnt
+            chosen = le
+            if cum >= threshold:
+                break
+        # chosen is the bucket's upper bound approximation
+        try:
+            p95_by_ep[ep] = float(chosen)
+        except Exception:
+            p95_by_ep[ep] = None
+
+    # Prepare a simple context for rendering
+    context = {
+        'http_counts': sorted(http_counts.items(), key=lambda x: -x[1])[:50],
+        'p95_by_ep': p95_by_ep,
+        'onboarding_requests': onboarding_requests,
+        'onboarding_success': onboarding_success,
+        'contract_validate': contract_validate,
+    }
+
+    return render_template('partners/admin_metrics.html', **context)
+
+
+@bp.get('/partner/admin/jobs')
+@bp.get('/partner/admin/jobs/')
+@admin_required
+def partner_admin_jobs():
+    """Render a simple admin HTML page that queries the JSON jobs API and
+    displays counts and recent jobs. This keeps the JSON API for programmatic
+    use while providing a friendly UI for admins."""
+    return render_template('partners/admin_jobs.html')
+
+
 @bp.post('/partner/admin/login')
+@bp.post('/partner/admin/login/')
 def partner_admin_login():
-    data = request.get_json(force=True)
-    key = data.get('admin_key')
+    # Support JSON API and form POST for login.
     expected = os.environ.get('ADMIN_API_KEY') or 'admin-demo-key'
+    key = None
+    if request.content_type and request.content_type.startswith('application/json'):
+        data = request.get_json(force=True)
+        key = data.get('admin_key')
+    else:
+        # form-encoded
+        key = request.form.get('admin_key')
+
     if key and key == expected:
         session['is_admin'] = True
+        # if form-based, redirect back to admin UI
+        if not (request.content_type and request.content_type.startswith('application/json')):
+            return redirect(url_for('.partner_admin'))
         return ('OK', 200)
     abort(401, 'Invalid admin key')
+
+
+@bp.get('/partner/admin/login')
+@bp.get('/partner/admin/login/')
+def partner_admin_login_get():
+    """Render a simple admin login form for server-side authentication."""
+    return render_template('partners/admin_login.html')
 
 
 @bp.post('/partner/admin/logout')
@@ -59,10 +211,10 @@ def partner_admin_logout():
 
 
 @bp.get('/partner/admin/audit')
+@bp.get('/partner/admin/audit/')
+@admin_required
 def partner_admin_audit():
     """Admin page: view recent partner ingest audit rows with simple filters."""
-    if not _is_admin_request():
-        abort(401, "Missing or invalid admin key")
 
     action_filter = request.args.get('action')
     api_key_prefix = request.args.get('api_key_prefix')
@@ -245,17 +397,26 @@ def partner_contract_example():
 @bp.post('/partner/contract/validate')
 def partner_contract_validate():
     """Sandbox validation endpoint for partners to validate sample feeds."""
+    # Rate-limit validation attempts to prevent abuse (best-effort)
+    api_key = request.headers.get('X-API-Key') or request.remote_addr
+    if not check_rate_limit(api_key, max_per_minute=30):
+        record_audit(None, api_key, 'contract_validate_rate_limited')
+        abort(429, 'Rate limit exceeded')
+
     content_type = request.content_type or ""
     payload = request.get_data()
     feed_version = request.headers.get("X-Feed-Version") or request.args.get("feed_version")
     products = parse_feed(payload, content_type=content_type, feed_version=feed_version)
     valid, errors = validate_against_contract(products)
+    # Record that a validation attempt occurred (mask API key if present)
+    record_audit(None, api_key if api_key else None, 'contract_validate', payload=str({'accepted': len(valid) if valid else 0, 'rejected': len(errors)}))
     if not valid:
         return (jsonify({"status": "validation_failed", "accepted": 0, "rejected": len(errors), "errors": errors}), 422)
     return jsonify({"status": "ok", "accepted": len(valid), "rejected": 0})
 
 
 @bp.post('/partner/onboard')
+@admin_required
 def partner_onboard():
     """Simple demo onboarding: create a partner and issue an API key. Admin-only in demo."""
     if not _is_admin_request():
@@ -266,13 +427,18 @@ def partner_onboard():
         abort(400, "Missing partner name")
     import secrets
     api_key = secrets.token_urlsafe(16)
+    # Optionally hash keys before storage when HASH_KEYS=true
+    hash_keys = os.environ.get("HASH_KEYS", "false").lower() in ("1", "true", "yes")
+    stored_key = hash_key_for_storage(api_key) if hash_keys else api_key
     conn = get_conn()
     try:
         cur = conn.cursor()
         cur.execute("INSERT INTO partner (name, format) VALUES (?, ?)", (name, data.get("format", "json")))
         pid = cur.lastrowid
-        cur.execute("INSERT INTO partner_api_keys (partner_id, api_key, description) VALUES (?, ?, ?)", (pid, api_key, data.get("description", "onboarded key")))
+        cur.execute("INSERT INTO partner_api_keys (partner_id, api_key, description) VALUES (?, ?, ?)", (pid, stored_key, data.get("description", "onboarded key")))
         conn.commit()
+        # Audit the onboarding event but do not record the raw API key
+        record_audit(pid, api_key, 'onboard_created', payload=str({'description': data.get('description', '')}))
         return jsonify({"partner_id": pid, "api_key": api_key})
     finally:
         conn.close()
@@ -280,6 +446,7 @@ def partner_onboard():
 
 
 @bp.post('/partner/onboard_form')
+@admin_required
 def partner_onboard_form():
     """Admin UI helper: create a partner and return the API key as JSON.
 
@@ -287,6 +454,11 @@ def partner_onboard_form():
     the admin UI can call it directly without exposing ADMIN_API_KEY in client JS.
     In a real deployment this must be protected by server-side authentication.
     """
+    # Require admin session/header: in earlier demo versions this endpoint was
+    # intentionally left open for client-side convenience, but that allows
+    # anyone to create partners without authentication. Make it admin-only.
+    if not _is_admin_request():
+        abort(401, "Missing or invalid admin key")
     data = None
     # Accept form-encoded or JSON
     if request.content_type and request.content_type.startswith('application/json'):
@@ -304,11 +476,16 @@ def partner_onboard_form():
     api_key = secrets.token_urlsafe(16)
     conn = get_conn()
     try:
+        # Optionally hash keys before storage when HASH_KEYS=true
+        hash_keys = os.environ.get("HASH_KEYS", "false").lower() in ("1", "true", "yes")
+        stored_key = hash_key_for_storage(api_key) if hash_keys else api_key
         cur = conn.cursor()
         cur.execute("INSERT INTO partner (name, format) VALUES (?, ?)", (name, data.get('format', 'json')))
         pid = cur.lastrowid
-        cur.execute("INSERT INTO partner_api_keys (partner_id, api_key, description) VALUES (?, ?, ?)", (pid, api_key, data.get('description', 'onboarded key')))
+        cur.execute("INSERT INTO partner_api_keys (partner_id, api_key, description) VALUES (?, ?, ?)", (pid, stored_key, data.get('description', 'onboarded key')))
         conn.commit()
+        # Audit onboarding (masking/hashing performed by record_audit)
+        record_audit(pid, api_key, 'onboard_created', payload=str({'description': data.get('description', '')}))
         return jsonify({"partner_id": pid, "api_key": api_key})
     finally:
         conn.close()
@@ -356,10 +533,10 @@ def partner_schedule():
 
 
 @bp.get('/partner/schedules')
+@bp.get('/partner/schedules/')
+@admin_required
 def list_schedules():
     """Admin endpoint: list all schedules."""
-    if not _is_admin_request():
-        abort(401, "Missing or invalid admin key")
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -373,12 +550,12 @@ def list_schedules():
 
 
 @bp.post('/partner/schedules')
+@bp.post('/partner/schedules/')
+@admin_required
 def create_schedule():
     """Admin endpoint: create a schedule. Expects JSON: {partner_id, schedule_type, schedule_value, enabled}
     schedule_value may be a JSON object (for interval) or string (for cron).
     """
-    if not _is_admin_request():
-        abort(401, "Missing or invalid admin key")
     data = request.get_json(force=True)
     partner_id = data.get('partner_id')
     schedule_type = data.get('schedule_type')
@@ -401,9 +578,9 @@ def create_schedule():
 
 
 @bp.delete('/partner/schedules/<int:sid>')
+@bp.delete('/partner/schedules/<int:sid>/')
+@admin_required
 def delete_schedule(sid: int):
-    if not _is_admin_request():
-        abort(401, "Missing or invalid admin key")
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -416,6 +593,8 @@ def delete_schedule(sid: int):
 
 
 @bp.get('/partner/jobs')
+@bp.get('/partner/jobs/')
+@admin_required
 def partner_jobs():
     """Inspect recent partner ingest jobs and counts.
 
@@ -520,9 +699,9 @@ def partner_diagnostics(diag_id: int):
 
 
 @bp.get('/partner/metrics')
+@bp.get('/partner/metrics/')
+@admin_required
 def partner_metrics():
-    if not _is_admin_request():
-        abort(401, "Missing or invalid admin key")
     return jsonify(get_metrics())
 
 

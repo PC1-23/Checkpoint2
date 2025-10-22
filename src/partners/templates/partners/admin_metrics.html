@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Admin Metrics</title>
+    <style>
+      body{font-family:Segoe UI,Arial,sans-serif;margin:20px}
+      table{border-collapse:collapse;width:100%}
+      th,td{border:1px solid #ddd;padding:8px}
+      th{background:#f2f2f2;text-align:left}
+      .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+      .card{padding:12px;border:1px solid #eee;border-radius:6px;background:#fafafa}
+    </style>
+  </head>
+  <body>
+    <a href="/partner/admin">← Back to admin</a>
+    <h1>Metrics (Admin)</h1>
+    <div class="grid">
+      <div class="card"><strong>Onboarding attempts</strong><div>{{ onboarding_requests }}</div></div>
+      <div class="card"><strong>Onboarding success</strong><div>{{ onboarding_success }}</div></div>
+      <div class="card"><strong>Contract validate</strong><div>{{ contract_validate }}</div></div>
+    </div>
+
+    <h2>Top endpoints by request count</h2>
+    <table>
+      <tr><th>Endpoint</th><th>Count</th><th>p95 (s, approx)</th></tr>
+      {% for ep, cnt in http_counts %}
+      <tr>
+        <td>{{ ep }}</td>
+        <td>{{ cnt }}</td>
+        <td>{{ p95_by_ep.get(ep) or 'n/a' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </body>
+</html>
