@@ -120,19 +120,30 @@ def worker_loop(db_path: str, poll_interval: float = 0.1):
                     # validate_products returns (valid_items, errors)
                     valid_items, validation_errors = validate_products(products)
                     cur = conn.cursor()
+
                     if validation_errors:
                         # If there are any validation errors, fail the job and persist diagnostics
                         logger.warning("Ingest validation failed for job=%s partner=%s errors=%s", jid, partner_id, validation_errors)
                         diag = {"accepted": 0, "rejected": len(validation_errors), "errors": validation_errors}
                         djson = json.dumps(diag)
-                        if len(djson) > 2000:
+                        try:
+                            if len(djson) > 2000:
+                                odcur = conn.cursor()
+                                odcur.execute("INSERT INTO partner_ingest_diagnostics (job_id, diagnostics) VALUES (?, ?)", (jid, djson))
+                                off_id = odcur.lastrowid
+                                cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ?, diagnostics = ? WHERE id = ?", (json.dumps(validation_errors), json.dumps({"errors_link": f"/partner/diagnostics/{off_id}"}), jid))
+                            else:
+                                cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ?, diagnostics = ? WHERE id = ?", (json.dumps(validation_errors), djson, jid))
+                            conn.commit()
+                        except sqlite3.OperationalError:
+                            # If diagnostics column missing, offload diagnostics and
+                            # still mark the job as failed.
                             odcur = conn.cursor()
                             odcur.execute("INSERT INTO partner_ingest_diagnostics (job_id, diagnostics) VALUES (?, ?)", (jid, djson))
                             off_id = odcur.lastrowid
-                            cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ?, diagnostics = ? WHERE id = ?", (json.dumps(validation_errors), json.dumps({"errors_link": f"/partner/diagnostics/{off_id}"}), jid))
-                        else:
-                            cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ?, diagnostics = ? WHERE id = ?", (json.dumps(validation_errors), djson, jid))
-                        conn.commit()
+                            cur.execute("UPDATE partner_ingest_jobs SET status='failed', error = ? WHERE id = ?", (json.dumps(validation_errors), jid))
+                            conn.commit()
+
                         record_audit(partner_id, None, "worker_validation_failed", payload=json.dumps(validation_errors))
                     else:
                         upserted, upsert_errors = upsert_products(conn, valid_items, partner_id=partner_id)
@@ -140,14 +151,25 @@ def worker_loop(db_path: str, poll_interval: float = 0.1):
                         diag = {"accepted": upserted, "rejected": len(upsert_errors), "errors": upsert_errors}
                         djson = json.dumps(diag)
                         # Offload large diagnostics to separate table to avoid bloating job rows
-                        if len(djson) > 2000:
+                        try:
+                            if len(djson) > 2000:
+                                odcur = conn.cursor()
+                                odcur.execute("INSERT INTO partner_ingest_diagnostics (job_id, diagnostics) VALUES (?, ?)", (jid, djson))
+                                off_id = odcur.lastrowid
+                                cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP, diagnostics = ? WHERE id = ?", (json.dumps({"errors_link": f"/partner/diagnostics/{off_id}"}), jid))
+                            else:
+                                cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP, diagnostics = ? WHERE id = ?", (djson, jid))
+                            conn.commit()
+                        except sqlite3.OperationalError as oe:
+                            # Likely 'no such column: diagnostics' — offload and
+                            # update without diagnostics column.
+                            logger.warning("Diagnostics column unavailable, offloading diagnostics for job=%s: %s", jid, oe)
                             odcur = conn.cursor()
                             odcur.execute("INSERT INTO partner_ingest_diagnostics (job_id, diagnostics) VALUES (?, ?)", (jid, djson))
                             off_id = odcur.lastrowid
-                            cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP, diagnostics = ? WHERE id = ?", (json.dumps({"errors_link": f"/partner/diagnostics/{off_id}"}), jid))
-                        else:
-                            cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP, diagnostics = ? WHERE id = ?", (djson, jid))
-                        conn.commit()
+                            cur.execute("UPDATE partner_ingest_jobs SET status='done', processed_at = CURRENT_TIMESTAMP WHERE id = ?", (jid,))
+                            conn.commit()
+
                         incr("processed")
                         record_audit(partner_id, None, "worker_processed", payload=str(jid))
             except Exception as e:

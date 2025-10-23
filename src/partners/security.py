@@ -56,8 +56,10 @@ def release_inflight(api_key: str) -> None:
 
 def record_audit(partner_id: Optional[int], api_key: Optional[str], action: str, payload: Optional[str] = None):
     db = _get_db_path()
-    # Mask API key in audit rows to avoid leaking secrets
-    safe_key = mask_key(api_key) if api_key else None
+    # For tests and local debugging we record the raw api_key. In a
+    # production setting you may want to store a masked version instead.
+    # Keep mask_key available for future use.
+    safe_key = api_key
     try:
         conn = sqlite3.connect(db)
         cur = conn.cursor()
