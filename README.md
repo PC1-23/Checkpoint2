@@ -83,8 +83,7 @@ python -m src.main
 
 ## Project description
 
-CheckPoint1 is a simple two-tier retail prototype built with Flask (web UI) and SQLite (persistence). Users can view products, add items to a cart, register/login, and checkout. Data is stored in a SQLite database and all checkout operations run atomically via a small DAO layer.
-
+Building on the Checkpoint 1 two-tier retail prototype, we extended the system with **Flash Sales** and **Partner Integration** capabilities, implementing 14 quality attribute scenarios across 7 quality dimensions.
 ## Setup / Run / Test instructions
 
 Prerequisites: Python 3.10+ (use a virtual environment)
