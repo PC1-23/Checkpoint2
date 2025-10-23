@@ -79,7 +79,7 @@ sqlite3 app.sqlite < db/init.sql
 python -m src.main
 ```
 
-# CheckPoint1
+# CheckPoint2
 
 ## Project description
 
@@ -146,6 +146,8 @@ python -m src.main
 
 # optional: seed demo data (users + products)
 python -m src.seed
+#seed for flash sale products
+python -m db.seed_flash_sales
 ```
 
 3) Start the Flask app (single-process dev)

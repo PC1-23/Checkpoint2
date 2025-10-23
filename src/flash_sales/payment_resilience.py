@@ -38,11 +38,11 @@ payment_circuit_breaker = CircuitBreaker(
 )
 
 
-# @retry(max_attempts=3, delay_seconds=0.5, exceptions=(Exception,)) //test2
+# @retry(max_attempts=3, delay_seconds=0.5, exceptions=(Exception,)) 
 # def process_payment_with_retry(method: str, amount_cents: int) -> Tuple[str, str]:
 #     """Payment processing with retry logic"""
 #     # Force ALL attempts to fail
-#     print(f"💥 Payment FAILED (forcing circuit breaker to open)")
+#     print(f" Payment FAILED (forcing circuit breaker to open)")
 #     raise Exception("Payment service is DOWN")
 
 @retry(max_attempts=3, delay_seconds=0.5, exceptions=(Exception,))
@@ -58,7 +58,7 @@ def process_payment_with_retry(method: str, amount_cents: int) -> Tuple[str, str
         print(f"Payment attempt failed: {e}")
         raise
 
-# @retry(max_attempts=3, delay_seconds=0.5, exceptions=(Exception,)) //Test 1
+# @retry(max_attempts=3, delay_seconds=0.5, exceptions=(Exception,)) 
 # def process_payment_with_retry(method: str, amount_cents: int) -> Tuple[str, str]:
 #     """Payment processing with retry logic"""
 #     global _payment_attempt_counter

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS product (
     price_cents INTEGER NOT NULL CHECK(price_cents >= 0),
     stock INTEGER NOT NULL CHECK(stock >= 0),
     active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
-    -- NEW: Flash sale columns
+
     flash_sale_active INTEGER DEFAULT 0,
     flash_sale_price_cents INTEGER
 );

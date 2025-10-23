@@ -12,7 +12,7 @@ import sqlite3
 import time
 import uuid
 
-from . import observability
+# from . import observability
 
 from .dao import SalesRepo, ProductRepo, get_connection
 from .payment import process as payment_process
