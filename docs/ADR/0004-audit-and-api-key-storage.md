@@ -2,8 +2,7 @@
 
 Status: Accepted
 
-Quality attribute(s): Security, Auditability, Compliance
-
+Quality attribute(s): Security
 Context
 -------
 We need to keep an auditable record of partner operations and protect

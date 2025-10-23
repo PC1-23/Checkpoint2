@@ -1,4 +1,4 @@
-# ADR-006: Caching Strategy for Flash Sale Performance
+# ADR-0017: Caching Strategy for Flash Sale Performance
 
 **Status:** Accepted
 

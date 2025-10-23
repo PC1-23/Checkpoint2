@@ -1,12 +1,3 @@
-
-This document collects scenarios for the Security quality attribute for the
-Partner Catalog Ingest feature. All scenarios below are examples of the
-Security quality attribute and map to tactics/patterns and ADRs.
-
-This document lists concrete security scenarios for the Partner Catalog Ingest
-feature using the six-part template: Source, Stimulus, Environment, Artifact,
-Response, Response-Measure.
-
 ## Table of Contents
 
 - Security scenarios
@@ -17,9 +8,6 @@ Response, Response-Measure.
 - ADR Index (linked list of ADRs referenced in this catalog)
 
 ## ADR Index
-
-- [ADR 0001 - Database Choice](docs/ADR/0001-database-choice.md) — Choose SQLite for the prototype (simple, transactional, portable).
-- [ADR 0002 - Persistence Style](docs/ADR/0002-persistence-style.md) — Use DAO pattern with raw SQL instead of an ORM for explicit control and testability.
 - [ADR 0003 - API Key Rate Limiting](docs/ADR/0003-rate-limiting.md) — Per-API-key in-process rate limiter for demo; recommend shared store or gateway in prod.
 - [ADR 0004 - Audit Trail & API Key Storage](docs/ADR/0004-audit-and-api-key-storage.md) — Append-only audit table and guidance to hash API keys for production.
 - [ADR 0005 - Input Validation Policy](docs/ADR/0005-input-validation.md) — Strict validation-first policy for partner feeds; reject and audit invalid items.
@@ -34,6 +22,8 @@ Response, Response-Measure.
 - [ADR 0015 - Rate Limiting Strategy](docs/ADR/0015-rate-limiting-strategy.md) — Sliding-window rate limiter for flash checkout and abusive traffic protection.
 - [ADR 0016 - Flash Sale Implementation](docs/ADR/0016-flash-sale-implementation.md) — Data model and manager for flash sale support.
 - [ADR 0017 - Caching Strategy](docs/ADR/0017-caching-strategy.md) — Small in-process cache/tiered approach for hotspot flash products.
+- [ADR 0018 - Upload Feedback](docs/ADR/0018-upload-feedback.md) — Structured validation summaries for partner uploads (sync and async diagnostics).
+- [ADR 0019 - Partner Onboarding](docs/ADR/0019-onboarding-partners.md) — Self-service onboarding, API key issuance, and sandbox validation endpoints.
 
 # Quality Scenarios Catalog
 
@@ -298,6 +288,7 @@ Implemented in
 - Endpoint: `src/partners/routes.py::partner_contract` (`GET /partner/contract`)
 - ADR: `docs/ADR/0010-contract.md`
 
+
 ## Scenario I2: Feed version negotiation and backward compatibility
 
 - Source: Partner engineering team / Platform ops
@@ -330,6 +321,7 @@ Mapping additions
     - Contract & validator: `src/partners/integrability.py::get_contract` and `validate_against_contract`
     - Endpoint: `src/partners/routes.py::partner_contract` (`GET /partner/contract`)
   - ADRs: `docs/ADR/0010-integrability.md`, `docs/ADR/0005-input-validation.md`
+   - ADRs: `docs/ADR/0010-contract.md`, `docs/ADR/0005-input-validation.md`
 
 - I2: Feed version negotiation and backward compatibility
   - Selected tactics: Versioned contracts, adapter selection, `extra` for forward compatibility

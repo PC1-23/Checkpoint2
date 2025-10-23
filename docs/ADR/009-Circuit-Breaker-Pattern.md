@@ -1,4 +1,4 @@
-# ADR-003: Circuit Breaker Pattern for Payment Service Resilience
+# ADR-009: Circuit Breaker Pattern for Payment Service Resilience
 
 **Status:** Accepted
 

@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Quality attribute(s): Security, Data Integrity, Reliability, Usability
+Quality attribute(s): Security
 
 Context
 -------

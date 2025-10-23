@@ -3,7 +3,7 @@
 
 Status: Accepted
 
-Quality attribute(s): Testability, Reliability, Developer Productivity
+Quality attribute(s): Testability
 
 Context
 -------

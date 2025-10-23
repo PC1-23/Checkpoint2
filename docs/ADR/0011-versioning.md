@@ -3,7 +3,7 @@
 
 Status: Accepted
 
-Quality attribute(s): Modifiability, Evolvability, Interoperability
+Quality attribute(s): Modifiability
 
 Context
 -------

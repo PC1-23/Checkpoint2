@@ -3,7 +3,7 @@
 
 Status: Accepted
 
-Quality attribute(s): Modifiability, Extensibility, Testability
+Quality attribute(s): Modifiability
 
 Context
 -------

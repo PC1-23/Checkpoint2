@@ -1,4 +1,4 @@
-# ADR-004: Rate Limiting Strategy for Flash Sale Protection
+# ADR-0018: Rate Limiting Strategy for Flash Sale Protection
 
 **Status:** Accepted
 

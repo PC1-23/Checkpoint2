@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Quality attribute(s): Security, Access Control, Maintainability
+Quality attribute(s): Security
 
 Context
 -------

@@ -3,7 +3,7 @@
 
 Status: Accepted
 
-Quality attribute(s): Usability, Integrability, Supportability
+Quality attribute(s): Usability
 
 Context
 -------

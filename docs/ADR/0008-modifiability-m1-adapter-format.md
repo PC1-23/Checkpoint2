@@ -1,9 +1,9 @@
 ```markdown
-# ADR 0008: Adapter & Feed Format Evolution (M1)
+# ADR 0008: Adapter & Feed Format Evolution
 
 Status: Accepted
 
-Quality attribute(s): Modifiability, Interoperability, Testability
+Quality attribute(s): Modifiability
 
 Context
 -------

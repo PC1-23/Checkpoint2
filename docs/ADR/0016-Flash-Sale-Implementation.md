@@ -1,4 +1,4 @@
-# ADR-005: Flash Sale Implementation Strategy
+# ADR-0016: Flash Sale Implementation Strategy
 
 **Status:** Accepted
 

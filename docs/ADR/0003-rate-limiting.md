@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Quality attribute(s): Security, Reliability, Availability
+Quality attribute(s): Security
 
 Context
 -------
